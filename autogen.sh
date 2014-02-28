@@ -7,4 +7,8 @@ mkdir -p config
 
 libtoolize -f -c
 shtoolize -q all
-autoreconf --install --symlink --force
+aclocal --force
+autoheader --force
+automake --foreign --add-missing --force-missing
+autoconf --force
+
