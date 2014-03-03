@@ -8,6 +8,5 @@
 typedef void (comm_notify_cb)(void *);
 
 void init_comm(struct event_base *base);
-int comm_get_client_info(struct evp_client *client);
 
 #endif
