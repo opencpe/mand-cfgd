@@ -4,8 +4,8 @@
 
 AM_CFLAGS = -D_GNU_SOURCE -Wall -I$(top_srcdir)/include/compat -I$(top_srcdir)/include -g -funit-at-a-time -std=gnu11
 
-bin_PROGRAMS = cfgd
+bin_PROGRAMS = mand-cfgd
 
-cfgd_SOURCES = cfgd.c comm.c
+mand_cfgd_SOURCES = cfgd.c comm.c
 
 DISTCLEANFILES = *~

@@ -7,7 +7,7 @@
 *\.la
 
 # mand build files
-src/cfgd
+src/mand-cfgd
 
 # automake / autoconf files
 autom4te.cache/
