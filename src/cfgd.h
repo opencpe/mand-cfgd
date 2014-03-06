@@ -9,6 +9,12 @@
 #include <sys/tree.h>
 #include <event.h>
 
+struct ntp_servers {
+	int count;
+	char **server;
+};
+
+void set_ntp_server(const struct ntp_servers *servers);
 void set_value(char *path, const char *str);
 
 #endif
