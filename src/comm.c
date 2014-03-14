@@ -64,7 +64,6 @@ decode_node_list(const char *prefix, DM_AVPGRP *grp, DECODE_CB cb, void *cb_data
 	char *name, *path;
 	uint32_t type;
 
-
 	if ((r = dm_expect_object(grp, &container)) != RC_OK
 	    || (r = dm_expect_string_type(container, AVP_NODE_NAME, VP_TRAVELPING, &name)) != RC_OK
 	    || (r = dm_expect_uint32_type(container, AVP_NODE_TYPE, VP_TRAVELPING, &type)) != RC_OK)
@@ -107,7 +106,7 @@ decode_node_list(const char *prefix, DM_AVPGRP *grp, DECODE_CB cb, void *cb_data
 	return RC_OK;
 }
 
-/** apply the values from system.ntp list to the UCI configuration
+/** apply the values from system.ntp.server list to the UCI configuration
  *
  * NOTE: this version cut some corners, more carefull check are needed when/if
  *       the datamodel also supports TCP
@@ -147,7 +146,7 @@ ntpListReceived(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data __attrib
 	if (!srvs.server)
 		return;
 
-        while (decode_node_list("system.ntp", answer_grp, ntp_cb, &srvs) == RC_OK) {
+        while (decode_node_list("system.ntp.server", answer_grp, ntp_cb, &srvs) == RC_OK) {
         }
 
 	set_ntp_server(&srvs);
@@ -156,7 +155,7 @@ ntpListReceived(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data __attrib
 static void
 listSystemNtp(DMCONTEXT *dmCtx)
 {
-        if (dm_register_list(dmCtx, "system.ntp", 0, ntpListReceived, NULL))
+        if (dm_register_list(dmCtx, "system.ntp.server", 0, ntpListReceived, NULL))
                 CB_ERR("Couldn't register LIST request.\n");
 }
 
@@ -237,7 +236,7 @@ subscribedNotify(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data __attri
                 CB_ERR("Couldn't subscribe notifications.");
         logx(LOG_DEBUG, "Subscribed notifications.");
 
-        if(dm_register_recursive_param_notify(dmCtx, 1, "system.ntp", registeredParamNotify, NULL))
+        if(dm_register_recursive_param_notify(dmCtx, 1, "system.ntp.server", registeredParamNotify, NULL))
 		CB_ERR("Couldn't register RECURSIVE PARAM NOTIFY request.");
         logx(LOG_DEBUG, "RECURSIVE PARAM NOTIFY request registered.");
 }
