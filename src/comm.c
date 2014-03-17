@@ -39,6 +39,9 @@
 static int session_valid = 0;
 static DMCONTEXT dmCtx;
 
+#define IF_IP     (1 << 0)
+#define IF_NEIGH  (1 << 1)
+
 #define CB_ERR(...) \
 	do {					\
 		fprintf(stderr, __VA_ARGS__);	\
@@ -56,21 +59,38 @@ static DMCONTEXT dmCtx;
 
 typedef void (*DECODE_CB)(const char *name, uint32_t code, uint32_t vendor_id, void *data, size_t size, void *cb_data);
 
-static void *new_string_list(void *ctx, struct string_list *list)
+static void *new_var_list(void *ctx, struct var_list *list, size_t size)
 {
-	memset(list, 0, sizeof(struct string_list));
-	list->s = talloc_array(ctx, char *, 16);
+	memset(list, 0, sizeof(struct var_list));
+	list->ctx = ctx;
 
-	return list->s;
+	return 1;
 }
-static void add_string_list(struct string_list *list, const void *data, size_t size)
+
+static void *add_var_list(struct var_list *list, size_t size)
 {
 	if ((list->count % 16) == 0) {
-		if (!(list->s = talloc_realloc(NULL, list->s, char *, list->count + 16)))
-			return;
+		if (!(list->data = talloc_realloc_size(list->ctx, list->data, size * (list->count + 16))))
+			return NULL;
 	}
-	list->s[list->count] = talloc_strndup(list->s, data, size);
 	list->count++;
+
+	return &list->data[list->count - 1];
+}
+
+static void *new_string_list(void *ctx, struct string_list *list)
+{
+	return new_var_list(ctx, (struct var_list *)list, sizeof(char *));
+}
+
+static void add_string_list(struct string_list *list, const void *data, size_t size)
+{
+	void **d;
+
+	if (!(d = add_var_list((struct var_list *)list, sizeof(char *))))
+		return;
+
+	*d = talloc_strndup(list->ctx, data, size);
 }
 
 uint32_t
@@ -232,6 +252,160 @@ listSystemDns(DMCONTEXT *dmCtx)
 }
 
 
+
+/** apply the values from system.dns.server list to the UCI configuration
+ *
+ * NOTE: this version cut some corners, more carefull check are needed when/if
+ *       the datamodel also supports TCP
+ */
+struct if_params {
+	struct string_list search;
+	struct string_list srvs;
+};
+
+void if_ip_addr(const char *name, void *data, size_t size, struct ip_list *list)
+{
+	const char *s;
+
+	if (!(s = strchr(name + 1, '.')))
+		return;
+
+	if (strncmp("ip", s + 1, 2) == 0) {
+		char b[INET6_ADDRSTRLEN];
+		int af;
+		struct in6_addr addr;
+		struct ipaddr *d;
+
+		if (!(d = add_var_list((struct var_list *)list, sizeof(struct ipaddr))))
+			return;
+
+		dm_get_address_avp(&af, &addr, sizeof(addr), data, size);
+		inet_ntop(af, &addr, b, sizeof(b));
+		d->af = af;
+		d->address = talloc_strdup(list->ctx, b);
+	} else if (size != 0 && strncmp("netmask", s + 1, 7) == 0) {
+		struct ipaddr *d = list->ip + list->count - 1;
+
+		d->value = talloc_asprintf(list->ctx, data, size);
+	} else if (size != 0 && strncmp("prefix-length", s + 1, 13) == 0) {
+		struct ipaddr *d = list->ip + list->count - 1;
+
+		switch (d->af) {
+		case AF_INET: {
+			char b[INET_ADDRSTRLEN];
+			struct in_addr addr;
+
+			addr.s_addr = htonl(0xffffffff << (32 - dm_get_uint32_avp(data)));
+
+			inet_ntop(AF_INET, &addr, b, sizeof(b));
+			d->value = talloc_strdup(list->ctx, b);
+
+			break;
+		}
+		case AF_INET6:
+			d->value = talloc_asprintf(list->ctx, "%u", dm_get_uint32_avp(data));
+			break;
+		}
+	}
+}
+
+void if_ip_neigh(const char *name, void *data, size_t size, struct ip_list *list)
+{
+	const char *s;
+
+	if (!(s = strchr(name + 1, '.')))
+		return;
+
+	if (strncmp("ip", s + 1, 2) == 0) {
+		char b[INET6_ADDRSTRLEN];
+		int af;
+		struct in6_addr addr;
+		struct ipaddr *d;
+
+		if (!(d = add_var_list((struct var_list *)list, sizeof(struct ipaddr))))
+			return;
+
+		dm_get_address_avp(&af, &addr, sizeof(addr), data, size);
+		inet_ntop(af, &addr, b, sizeof(b));
+		d->address = talloc_strdup(list->ctx, b);
+	} else if (strncmp("link-layer-address", s + 1, 20) == 0) {
+		struct ipaddr *d = list->ip + list->count - 1;
+
+		d->value = talloc_strndup(list->ctx, data, size);
+	}
+}
+
+void if_ip(const char *name, void *data, size_t size, struct if_ip *if_ip)
+{
+	if (strncmp("address", name, 7) == 0) {
+		if_ip_addr(name + 8, data, size, &if_ip->addr);
+	} else if (strncmp("neighbor", name, 8) == 0) {
+		if_ip_neigh(name + 9, data, size, &if_ip->neigh);
+	}
+}
+
+void if_cb(const char *name, uint32_t code, uint32_t vendor_id, void *data, size_t size, void *cb_data)
+{
+	struct interface_list *info = (struct interface_list *)cb_data;
+	const char *s;
+
+	/* fprintf(stderr, "got : %s\n", name); */
+
+	if (code == NODE_OBJECT)
+		return;
+
+	if (!(s = strchr(name + 1, '.')))
+		return;
+
+	if (strncmp(s + 1, "name", 4) == 0) {
+		struct interface *d;
+
+		if (!(d = add_var_list((struct var_list *)info, sizeof(struct interface))))
+			return;
+
+		if (!new_var_list(info->ctx, (struct var_list *)&d->ipv4.addr, sizeof(struct ip_list))
+		    || !new_var_list(info->ctx, (struct var_list *)&d->ipv4.neigh, sizeof(struct ip_list))
+		    || !new_var_list(info->ctx, (struct var_list *)&d->ipv6.addr, sizeof(struct ip_list))
+		    || !new_var_list(info->ctx, (struct var_list *)&d->ipv6.neigh, sizeof(struct ip_list)))
+			return;
+
+		d->name = talloc_strndup(info->ctx, data, size);
+	} else if (strncmp(s + 1, "ipv4", 4) == 0) {
+		if_ip(s + 6, data, size, &info->iface[info->count - 1].ipv4);
+	} else if (strncmp(s + 1, "ipv6", 4) == 0) {
+		if_ip(s + 6, data, size, &info->iface[info->count - 1].ipv6);
+	}
+}
+
+static void
+ifListReceived(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data, uint32_t answer_rc, DM_AVPGRP *answer_grp)
+{
+	unsigned int flag = *(unsigned int *)user_data;
+	struct interface_list info;
+
+        if (event != DMCONFIG_ANSWER_READY || answer_rc)
+                CB_ERR("Couldn't list object.\n");
+
+	if (!new_var_list(answer_grp, (struct var_list *)&info, sizeof(struct interface)))
+		return;
+
+        while (decode_node_list("", answer_grp, if_cb, &info) == RC_OK) {
+        }
+
+	if (flag | IF_NEIGH)
+		set_if_neigh(&info);
+	if (flag | IF_IP)
+		set_if_addr(&info);
+}
+
+static void
+listInterfaces(DMCONTEXT *dmCtx, unsigned int flags)
+{
+        if (dm_register_list(dmCtx, "interfaces.interface", 16, ifListReceived, &flags))
+                CB_ERR("Couldn't register LIST request.\n");
+}
+
+
 static void
 registeredParamNotify(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data __attribute__ ((unused)), uint32_t answer_rc, DM_AVPGRP *answer_grp)
 {
@@ -262,6 +436,9 @@ eventBroadcast(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data __attribu
 		listSystemNtp(dmCtx);
 	else if (strncmp(path, "system.dns-resolver", 19) == 0)
 		listSystemDns(dmCtx);
+	else if (strncmp(path, "interfaces", 10) == 0)
+		listInterfaces(dmCtx, IF_IP | IF_NEIGH);
+
 }
 
 void
@@ -340,6 +517,7 @@ sessionStarted(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data __attribu
 
 	listSystemNtp(dmCtx);
 	listSystemDns(dmCtx);
+	listInterfaces(dmCtx, IF_IP | IF_NEIGH);
 }
 
 static void

@@ -109,6 +109,34 @@ void set_dns(const struct string_list *search, const struct string_list *servers
 	vsystem("/etc/init.d/dnsmasq restart");
 }
 
+void set_if_addr(struct interface_list *info)
+{
+	int i, j;
+
+	for (i = 0; i < info->count; i++) {
+		for (j = 0; j < info->iface[i].ipv4.addr.count; j++) {
+			vasystem("uci set network.%s.ipaddr=%s", info->iface[i].name, info->iface[i].ipv4.addr.ip[j].address);
+			vasystem("uci set network.%s.netmask=%s", info->iface[i].name, info->iface[i].ipv4.addr.ip[j].value);
+		}
+		for (j = 0; j < info->iface[i].ipv6.addr.count; j++)
+			vasystem("uci set network.%s.ip6addr=%s/%s", info->iface[i].name, info->iface[i].ipv6.addr.ip[j].address, info->iface[i].ipv6.addr.ip[j].value);
+	}
+}
+
+void set_if_neigh(struct interface_list *info)
+{
+	int i, j;
+
+	vsystem("ip neigh flush nud permanent");
+
+	for (i = 0; i < info->count; i++) {
+		for (j = 0; j < info->iface[i].ipv4.neigh.count; j++)
+			vasystem("ip neigh add %s lladdr %s nud permanent dev %s", info->iface[i].ipv4.neigh.ip[j].address, info->iface[i].ipv4.neigh.ip[j].value, info->iface[i].name);
+
+		for (j = 0; j < info->iface[i].ipv6.neigh.count; j++)
+			vasystem("ip neigh add %s lladdr %s nud permanent dev %s", info->iface[i].ipv6.neigh.ip[j].address, info->iface[i].ipv6.neigh.ip[j].value, info->iface[i].name);
+	}
+}
 
 void set_value(char *path, const char *str)
 {

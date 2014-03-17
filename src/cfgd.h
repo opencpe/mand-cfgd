@@ -10,17 +10,56 @@
 #include <event.h>
 
 struct ntp_servers {
+	void *ctx;
 	int count;
 	char **server;
 };
 
+struct var_list {
+	void *ctx;
+	int count;
+	void **data;
+};
+
 struct string_list {
+	void *ctx;
 	int count;
 	char **s;
 };
 
+struct ipaddr {
+	int af;
+	char *address;
+	char *value;
+};
+
+struct ip_list {
+	void *ctx;
+	int count;
+	struct ipaddr *ip;
+};
+
+struct if_ip {
+	struct ip_list addr;
+	struct ip_list neigh;
+};
+
+struct interface {
+	char *name;
+	struct if_ip ipv4;
+	struct if_ip ipv6;
+};
+
+struct interface_list {
+	void *ctx;
+	int count;
+	struct interface *iface;
+};
+
 void set_ntp_server(const struct ntp_servers *servers);
 void set_dns(const struct string_list *search, const struct string_list *servers);
+void set_if_addr(struct interface_list *info);
+void set_if_neigh(struct interface_list *info);
 void set_value(char *path, const char *str);
 
 #endif
