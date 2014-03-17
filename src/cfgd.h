@@ -14,7 +14,13 @@ struct ntp_servers {
 	char **server;
 };
 
+struct string_list {
+	int count;
+	char **s;
+};
+
 void set_ntp_server(const struct ntp_servers *servers);
+void set_dns(const struct string_list *search, const struct string_list *servers);
 void set_value(char *path, const char *str);
 
 #endif

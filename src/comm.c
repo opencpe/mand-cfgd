@@ -56,6 +56,23 @@ static DMCONTEXT dmCtx;
 
 typedef void (*DECODE_CB)(const char *name, uint32_t code, uint32_t vendor_id, void *data, size_t size, void *cb_data);
 
+static void *new_string_list(void *ctx, struct string_list *list)
+{
+	memset(list, 0, sizeof(struct string_list));
+	list->s = talloc_array(ctx, char *, 16);
+
+	return list->s;
+}
+static void add_string_list(struct string_list *list, const void *data, size_t size)
+{
+	if ((list->count % 16) == 0) {
+		if (!(list->s = talloc_realloc(NULL, list->s, char *, list->count + 16)))
+			return;
+	}
+	list->s[list->count] = talloc_strndup(list->s, data, size);
+	list->count++;
+}
+
 uint32_t
 decode_node_list(const char *prefix, DM_AVPGRP *grp, DECODE_CB cb, void *cb_data)
 {
@@ -86,6 +103,7 @@ decode_node_list(const char *prefix, DM_AVPGRP *grp, DECODE_CB cb, void *cb_data
 		break;
 	}
 
+	case NODE_TABLE:
 	case NODE_OBJECT: {
 		DM_OBJ *obj;
 
@@ -100,7 +118,7 @@ decode_node_list(const char *prefix, DM_AVPGRP *grp, DECODE_CB cb, void *cb_data
 	}
 
 	default:
-		printf("unknown object: %s, type: %d\n", name ,type);
+		printf("unknown object: %s, type: %d\n", path ,type);
 		break;
 	}
 	return RC_OK;
@@ -159,6 +177,61 @@ listSystemNtp(DMCONTEXT *dmCtx)
                 CB_ERR("Couldn't register LIST request.\n");
 }
 
+
+/** apply the values from system.dns.server list to the UCI configuration
+ *
+ * NOTE: this version cut some corners, more carefull check are needed when/if
+ *       the datamodel also supports TCP
+ */
+struct dns_params {
+	struct string_list search;
+	struct string_list srvs;
+};
+
+void dns_cb(const char *name, uint32_t code, uint32_t vendor_id, void *data, size_t size, void *cb_data)
+{
+	struct dns_params *info = (struct dns_params *)cb_data;
+	const char *s;
+
+	if (code == NODE_OBJECT)
+		return;
+
+	if (!(s = strrchr(name, '.')))
+		return;
+
+	if (strncmp(s + 1, "search", 6) == 0) {
+		add_string_list(&info->search, data, size);
+	} else if (strncmp(s + 1, "address", 7) == 0) {
+		add_string_list(&info->srvs, data, size);
+	}
+}
+
+static void
+dnsListReceived(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data __attribute__((unused)), uint32_t answer_rc, DM_AVPGRP *answer_grp)
+{
+	struct dns_params info;
+
+        if (event != DMCONFIG_ANSWER_READY || answer_rc)
+                CB_ERR("Couldn't list object.\n");
+
+	if (!new_string_list(answer_grp, &info.search)
+	    || !new_string_list(answer_grp, &info.srvs))
+		return;
+
+        while (decode_node_list("system.dns-resolver", answer_grp, dns_cb, &info) == RC_OK) {
+        }
+
+	set_dns(&info.search, &info.srvs);
+}
+
+static void
+listSystemDns(DMCONTEXT *dmCtx)
+{
+        if (dm_register_list(dmCtx, "system.dns-resolver", 0, dnsListReceived, NULL))
+                CB_ERR("Couldn't register LIST request.\n");
+}
+
+
 static void
 registeredParamNotify(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data __attribute__ ((unused)), uint32_t answer_rc, DM_AVPGRP *answer_grp)
 {
@@ -176,6 +249,8 @@ eventBroadcast(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data __attribu
         if (event != DMCONFIG_ANSWER_READY)
                 CB_ERR("Error while retrieving an event broadcast.\n");
 
+	printf("Broadcast....\n");
+
 	if (dm_expect_uint32_type(grp, AVP_EVENT_TYPE, VP_TRAVELPING, &type) != RC_OK
 	    || dm_expect_string_type(grp, AVP_PATH, VP_TRAVELPING, &path) != RC_OK)
 		return;
@@ -183,7 +258,10 @@ eventBroadcast(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data __attribu
 	printf("Event: %d on \"%s\"\n", type, path);
 	logx(LOG_DEBUG, "Event: %d on \"%s\"\n", type, path);
 
-	listSystemNtp(dmCtx);
+	if (strncmp(path, "system.ntp", 10) == 0)
+		listSystemNtp(dmCtx);
+	else if (strncmp(path, "system.dns-resolver", 19) == 0)
+		listSystemDns(dmCtx);
 }
 
 void
@@ -238,6 +316,8 @@ subscribedNotify(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data __attri
 
         if(dm_register_recursive_param_notify(dmCtx, 1, "system.ntp.server", registeredParamNotify, NULL))
 		CB_ERR("Couldn't register RECURSIVE PARAM NOTIFY request.");
+        if(dm_register_recursive_param_notify(dmCtx, 1, "system.dns-resolver", registeredParamNotify, NULL))
+		CB_ERR("Couldn't register RECURSIVE PARAM NOTIFY request.");
         logx(LOG_DEBUG, "RECURSIVE PARAM NOTIFY request registered.");
 }
 
@@ -259,6 +339,7 @@ sessionStarted(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data __attribu
         logx(LOG_DEBUG, "Notification subscription request registered.");
 
 	listSystemNtp(dmCtx);
+	listSystemDns(dmCtx);
 }
 
 static void

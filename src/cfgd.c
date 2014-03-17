@@ -12,6 +12,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <inttypes.h>
 #include <fcntl.h>
 #include <time.h>
@@ -49,17 +50,65 @@ static const char _build[] = "build on " __DATE__ " " __TIME__ " with gcc " __VE
 
 struct event_base *ev_base;
 
+
+int vsystem(const char *cmd)
+{
+        int rc = 0;
+        int _errno;
+
+        fprintf(stderr, "cmd=[%s]\n", cmd);
+
+        errno = 0;
+        rc = system(cmd);
+
+        _errno = errno;
+        fprintf(stderr, "cmd=[%s], rc=%d, error=%s\n", cmd, rc, strerror(_errno));
+	errno = _errno;
+
+        return rc;
+}
+
+int vasystem(const char *fmt, ...)
+{
+        va_list args;
+        char    buf[1024];
+
+        va_start(args, fmt);
+        vsnprintf(buf, sizeof(buf), fmt, args);
+        va_end(args);
+
+        return vsystem(buf);
+}
+
 void set_ntp_server(const struct ntp_servers *servers)
 {
 	int i;
 
-	fprintf(stderr, "exec: uci delete system.ntp.server\n");
+	vsystem("uci delete system.ntp.server");
 	for (i = 0; i < servers->count; i++) {
-		fprintf(stderr, "exec: uci add_list system.ntp.server='%s'\n", servers->server[i]);
+		vasystem("uci add_list system.ntp.server='%s'", servers->server[i]);
 	}
-	fprintf(stderr, "exec: uci commit system.ntp.server\n");
-	fprintf(stderr, "exec: restart ntp client\n");
+	vsystem("uci commit system.ntp.server");
+	vsystem("/etc/init.d/sysntpd restart");
 }
+
+void set_dns(const struct string_list *search, const struct string_list *servers)
+{
+	char *s;
+	int i;
+
+	s = talloc_strdup(NULL, "uci set dnsmasq.server");
+	for (i = 0; i < servers->count; i++) {
+		s = talloc_asprintf_append(s, " %s", servers->s[i]);
+	}
+	talloc_free(s);
+
+	if (search->count != 0)
+		vasystem("uci set dhcp.@dnsmasq[0].domain %s", search->s[0]);
+	vsystem("uci commit dhcp");
+	vsystem("/etc/init.d/dnsmasq restart");
+}
+
 
 void set_value(char *path, const char *str)
 {
@@ -71,7 +120,7 @@ void set_value(char *path, const char *str)
 		long id = strtol(path + 11, &s, 10);
 
 		if (s && strncmp(s, ".udp.address", 12) == 0) {
-			fprintf(stderr, "exec: uci set system.ntp.@server[%ld]=%s\n", id - 1, str);
+			vasystem("uci set system.ntp.@server[%ld]=%s", id - 1, str);
 		}
 	}
 #endif
