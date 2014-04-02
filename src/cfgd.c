@@ -104,7 +104,7 @@ void set_dns(const struct string_list *search, const struct string_list *servers
 	talloc_free(s);
 
 	if (search->count != 0)
-		vasystem("uci set dhcp.@dnsmasq[0].domain %s", search->s[0]);
+		vasystem("uci set dhcp.@dnsmasq[0].domain=\"%s\"", search->s[0]);
 	vsystem("uci commit dhcp");
 	vsystem("/etc/init.d/dnsmasq restart");
 }
