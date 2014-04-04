@@ -59,12 +59,10 @@ static DMCONTEXT dmCtx;
 
 typedef void (*DECODE_CB)(const char *name, uint32_t code, uint32_t vendor_id, void *data, size_t size, void *cb_data);
 
-static void *new_var_list(void *ctx, struct var_list *list, size_t size)
+static void new_var_list(void *ctx, struct var_list *list, size_t size)
 {
 	memset(list, 0, sizeof(struct var_list));
 	list->ctx = ctx;
-
-	return 1;
 }
 
 static void *add_var_list(struct var_list *list, size_t size)
@@ -78,9 +76,9 @@ static void *add_var_list(struct var_list *list, size_t size)
 	return &list->data[list->count - 1];
 }
 
-static void *new_string_list(void *ctx, struct string_list *list)
+static void new_string_list(void *ctx, struct string_list *list)
 {
-	return new_var_list(ctx, (struct var_list *)list, sizeof(char *));
+	new_var_list(ctx, (struct var_list *)list, sizeof(char *));
 }
 
 static void add_string_list(struct string_list *list, const void *data, size_t size)
@@ -234,9 +232,8 @@ dnsListReceived(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data __attrib
         if (event != DMCONFIG_ANSWER_READY || answer_rc)
                 CB_ERR("Couldn't list object.\n");
 
-	if (!new_string_list(answer_grp, &info.search)
-	    || !new_string_list(answer_grp, &info.srvs))
-		return;
+	new_string_list(answer_grp, &info.search);
+	new_string_list(answer_grp, &info.srvs);
 
         while (decode_node_list("system.dns-resolver", answer_grp, dns_cb, &info) == RC_OK) {
         }
@@ -363,11 +360,10 @@ void if_cb(const char *name, uint32_t code, uint32_t vendor_id, void *data, size
 		if (!(d = add_var_list((struct var_list *)info, sizeof(struct interface))))
 			return;
 
-		if (!new_var_list(info->ctx, (struct var_list *)&d->ipv4.addr, sizeof(struct ip_list))
-		    || !new_var_list(info->ctx, (struct var_list *)&d->ipv4.neigh, sizeof(struct ip_list))
-		    || !new_var_list(info->ctx, (struct var_list *)&d->ipv6.addr, sizeof(struct ip_list))
-		    || !new_var_list(info->ctx, (struct var_list *)&d->ipv6.neigh, sizeof(struct ip_list)))
-			return;
+		new_var_list(info->ctx, (struct var_list *)&d->ipv4.addr, sizeof(struct ip_list));
+		new_var_list(info->ctx, (struct var_list *)&d->ipv4.neigh, sizeof(struct ip_list));
+		new_var_list(info->ctx, (struct var_list *)&d->ipv6.addr, sizeof(struct ip_list));
+		new_var_list(info->ctx, (struct var_list *)&d->ipv6.neigh, sizeof(struct ip_list));
 
 		d->name = talloc_strndup(info->ctx, data, size);
 	} else if (strncmp(s + 1, "ipv4", 4) == 0) {
@@ -386,8 +382,7 @@ ifListReceived(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data, uint32_t
         if (event != DMCONFIG_ANSWER_READY || answer_rc)
                 CB_ERR("Couldn't list object.\n");
 
-	if (!new_var_list(answer_grp, (struct var_list *)&info, sizeof(struct interface)))
-		return;
+	new_var_list(answer_grp, (struct var_list *)&info, sizeof(struct interface));
 
         while (decode_node_list("", answer_grp, if_cb, &info) == RC_OK) {
         }
