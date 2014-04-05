@@ -23,11 +23,13 @@
 #include <sys/tree.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
+#include <sys/types.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <ctype.h>
 #include <signal.h>
 #include <syslog.h>
+#include <pwd.h>
 #include <getopt.h>
 
 #define USE_DEBUG
@@ -35,6 +37,7 @@
 #include <event.h>
 
 #include <mand/logx.h>
+#include <mand/binary.h>
 
 #ifdef HAVE_TALLOC_TALLOC_H
 # include <talloc/talloc.h>
@@ -107,6 +110,51 @@ void set_dns(const struct string_list *search, const struct string_list *servers
 		vasystem("uci set dhcp.@dnsmasq[0].domain=\"%s\"", search->s[0]);
 	vsystem("uci commit dhcp");
 	vsystem("/etc/init.d/dnsmasq restart");
+}
+
+void set_ssh_keys(const char *name, const struct auth_ssh_key_list *list)
+{
+	int i;
+	FILE *fout;
+	char *s;
+	struct passwd *pw;
+
+	if (!(pw = getpwnam(name)))
+		return;
+
+	if (!pw->pw_dir || list->count == 0)
+		return;
+
+	if (asprintf(&s, "%s/.ssh/authorized_keys", pw->pw_dir) < 0)
+		return;
+
+	vasystem("mkdir -p %s/.ssh", pw->pw_dir);
+
+	if (!(fout = fopen(s, "w"))) {
+		free(s);
+		return;
+	}
+
+	for (i = 0; i < list->count; i++) {
+		fprintf(stderr, "    Key: %s %s %s\n", list->ssh[i].algo, list->ssh[i].data, list->ssh[i].name);
+		fprintf(fout, "%s %s %s\n", list->ssh[i].algo, list->ssh[i].data, list->ssh[i].name);
+	}
+	fclose(fout);
+
+	free(s);
+}
+
+void set_authentication(const struct auth_list *auth)
+{
+	int i;
+
+	printf("Users: %d\n", auth->count);
+	for (i = 0; i < auth->count; i++) {
+		fprintf(stderr, "  User: %s, pass: %s, ssh: %d\n", auth->user[i].name, auth->user[i].password, auth->user[i].ssh.count);
+
+		set_ssh_keys(auth->user[i].name, &auth->user[i].ssh);
+
+	}
 }
 
 void set_if_addr(struct interface_list *info)

@@ -15,10 +15,34 @@ struct ntp_servers {
 	char **server;
 };
 
+struct auth_ssh_key {
+	char *name;
+	char *algo;
+	char *data;
+};
+
+struct auth_ssh_key_list {
+	void *ctx;
+	int count;
+	struct auth_ssh_key *ssh;
+};
+
+struct auth_user {
+	char *name;
+	char *password;
+	struct auth_ssh_key_list ssh;
+};
+
+struct auth_list {
+	void *ctx;
+	int count;
+	struct auth_user *user;
+};
+
 struct var_list {
 	void *ctx;
 	int count;
-	void **data;
+	void *data;
 };
 
 struct string_list {
@@ -58,6 +82,7 @@ struct interface_list {
 
 void set_ntp_server(const struct ntp_servers *servers);
 void set_dns(const struct string_list *search, const struct string_list *servers);
+void set_authentication(const struct auth_list *auth);
 void set_if_addr(struct interface_list *info);
 void set_if_neigh(struct interface_list *info);
 void set_value(char *path, const char *str);

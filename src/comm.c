@@ -67,13 +67,18 @@ static void new_var_list(void *ctx, struct var_list *list, size_t size)
 
 static void *add_var_list(struct var_list *list, size_t size)
 {
+	void *p;
+
 	if ((list->count % 16) == 0) {
 		if (!(list->data = talloc_realloc_size(list->ctx, list->data, size * (list->count + 16))))
 			return NULL;
 	}
 	list->count++;
 
-	return &list->data[list->count - 1];
+	p = ((void *)list->data) + (list->count - 1) * size;
+	memset(p, 0, size);
+
+	return p;
 }
 
 static void new_string_list(void *ctx, struct string_list *list)
@@ -248,7 +253,81 @@ listSystemDns(DMCONTEXT *dmCtx)
                 CB_ERR("Couldn't register LIST request.\n");
 }
 
+/***************************************/
 
+void ssh_key(const char *name, void *data, size_t size, struct auth_ssh_key_list *list)
+{
+	if (strncmp(name, "name", 4) == 0) {
+		struct auth_ssh_key *d;
+
+		if (!(d = add_var_list((struct var_list *)list, sizeof(struct auth_ssh_key))))
+			return;
+
+		d->name = talloc_strndup(list->ctx, data, size);
+	} else if (strncmp(name, "algorithm", 9) == 0) {
+		list->ssh[list->count - 1].algo = talloc_strndup(list->ctx, data, size);
+	} else if (strncmp(name, "key-data", 8) == 0) {
+		list->ssh[list->count - 1].data = talloc_size(list->ctx, size * 2);
+		dm_to64(data, size, list->ssh[list->count - 1].data);
+	}
+}
+
+void auth_cb(const char *name, uint32_t code, uint32_t vendor_id, void *data, size_t size, void *cb_data)
+{
+	struct auth_list *info = (struct auth_list *)cb_data;
+	const char *s;
+
+	if (code == NODE_OBJECT)
+		return;
+
+	if (!(s = strchr(name + 1, '.')))
+		return;
+
+	if (strncmp(s + 1, "name", 4) == 0) {
+		struct auth_user *d;
+
+		printf("user (%d): %*s\n", info->count, size, data);
+		if (!(d = add_var_list((struct var_list *)info, sizeof(struct auth_user))))
+			return;
+
+		new_var_list(info->ctx, (struct var_list *)&d->ssh, sizeof(struct auth_ssh_key_list));
+
+		d->name = talloc_strndup(info->ctx, data, size);
+	} else if (strncmp(s + 1, "password", 8) == 0) {
+		printf("pass: %*s\n", size, data);
+		info->user[info->count - 1].password = talloc_strndup(info->ctx, data, size);
+	} else {
+		if (strncmp(s + 1, "ssh-key.", 8) == 0) {
+			if (!(s = strchr(s + 10, '.')))
+				return;
+
+			ssh_key(s + 1, data, size, &info->user[info->count - 1].ssh);
+		}
+	}
+}
+
+static void
+AuthListReceived(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data, uint32_t answer_rc, DM_AVPGRP *answer_grp)
+{
+	struct auth_list auth;
+
+        if (event != DMCONFIG_ANSWER_READY || answer_rc)
+                CB_ERR("Couldn't list object.\n");
+
+	new_var_list(answer_grp, (struct var_list *)&auth, sizeof(struct auth_user));
+
+        while (decode_node_list("", answer_grp, auth_cb, &auth) == RC_OK) {
+        }
+
+	set_authentication(&auth);
+}
+
+static void
+listAuthentication(DMCONTEXT *dmCtx)
+{
+        if (dm_register_list(dmCtx, "system.authentication.user", 16, AuthListReceived, NULL))
+                CB_ERR("Couldn't register LIST request.\n");
+}
 
 /** apply the values from system.dns.server list to the UCI configuration
  *
@@ -431,6 +510,8 @@ eventBroadcast(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data __attribu
 		listSystemNtp(dmCtx);
 	else if (strncmp(path, "system.dns-resolver", 19) == 0)
 		listSystemDns(dmCtx);
+	else if (strncmp(path, "system.authentication", 21) == 0)
+		listAuthentication(dmCtx);
 	else if (strncmp(path, "interfaces", 10) == 0)
 		listInterfaces(dmCtx, IF_IP | IF_NEIGH);
 
@@ -512,6 +593,7 @@ sessionStarted(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data __attribu
 
 	listSystemNtp(dmCtx);
 	listSystemDns(dmCtx);
+	listAuthentication(dmCtx);
 	listInterfaces(dmCtx, IF_IP | IF_NEIGH);
 }
 
