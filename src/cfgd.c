@@ -179,10 +179,10 @@ void set_if_neigh(struct interface_list *info)
 
 	for (i = 0; i < info->count; i++) {
 		for (j = 0; j < info->iface[i].ipv4.neigh.count; j++)
-			vasystem("ip neigh add %s lladdr %s nud permanent dev %s", info->iface[i].ipv4.neigh.ip[j].address, info->iface[i].ipv4.neigh.ip[j].value, info->iface[i].name);
+			vasystem("ip neigh replace %s lladdr %s nud permanent dev %s", info->iface[i].ipv4.neigh.ip[j].address, info->iface[i].ipv4.neigh.ip[j].value, info->iface[i].name);
 
 		for (j = 0; j < info->iface[i].ipv6.neigh.count; j++)
-			vasystem("ip neigh add %s lladdr %s nud permanent dev %s", info->iface[i].ipv6.neigh.ip[j].address, info->iface[i].ipv6.neigh.ip[j].value, info->iface[i].name);
+			vasystem("ip neigh replace %s lladdr %s nud permanent dev %s", info->iface[i].ipv6.neigh.ip[j].address, info->iface[i].ipv6.neigh.ip[j].value, info->iface[i].name);
 	}
 }
 
