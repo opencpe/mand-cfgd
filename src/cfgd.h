@@ -7,7 +7,7 @@
 
 #include <sys/queue.h>
 #include <sys/tree.h>
-#include <event.h>
+#include <ev.h>
 
 struct ntp_servers {
 	void *ctx;

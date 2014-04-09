@@ -7,6 +7,6 @@
 
 typedef void (comm_notify_cb)(void *);
 
-void init_comm(struct event_base *base);
+void init_comm(struct ev_loop *lopp);
 
 #endif

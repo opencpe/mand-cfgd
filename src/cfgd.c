@@ -34,7 +34,7 @@
 
 #define USE_DEBUG
 
-#include <event.h>
+#include <ev.h>
 
 #include <mand/logx.h>
 #include <mand/binary.h>
@@ -50,9 +50,6 @@
 
 static const char _ident[] = "cfgd v" VERSION;
 static const char _build[] = "build on " __DATE__ " " __TIME__ " with gcc " __VERSION__;
-
-struct event_base *ev_base;
-
 
 int vsystem(const char *cmd)
 {
@@ -209,16 +206,16 @@ void set_value(char *path, const char *str)
 #endif
 }
 
-static void sig_usr1(int fd, short event, void *arg)
+static void sig_usr1(EV_P_ ev_signal *w, int revents)
 {
 }
 
-static void sig_usr2(int fd, short event, void *arg)
+static void sig_usr2(EV_P_ ev_signal *w, int revents)
 {
 	logx_level = logx_level == LOG_DEBUG ? LOG_INFO : LOG_DEBUG;
 }
 
-static void sig_pipe(int fd, short event, void *arg)
+static void sig_pipe(EV_P_ ev_signal *w, int revents)
 {
 	logx(LOG_DEBUG, "sig_pipe");
 }
@@ -242,9 +239,9 @@ int main(int argc, char *argv[])
 		.rlim_max = RLIM_INFINITY
 	};
 
-	struct event signal_usr1;
-	struct event signal_usr2;
-	struct event signal_pipe;
+	ev_signal signal_usr1;
+	ev_signal signal_usr2;
+	ev_signal signal_pipe;
 
 	int c;
 
@@ -292,22 +289,20 @@ int main(int argc, char *argv[])
 
 	logx_open(basename(argv[0]), 0, LOG_DAEMON);
 
-        ev_base = event_init();
-        if (!ev_base)
-		return 1;
+	ev_signal_init(&signal_usr1, sig_usr1, SIGUSR1);
+        ev_signal_start(EV_DEFAULT_ &signal_usr1);
 
-        signal_set(&signal_usr1, SIGUSR1, sig_usr1, &signal_usr1);
-        signal_add(&signal_usr1, NULL);
-        signal_set(&signal_usr2, SIGUSR2, sig_usr2, &signal_usr2);
-        signal_add(&signal_usr2, NULL);
-        signal_set(&signal_pipe, SIGPIPE, sig_pipe, &signal_pipe);
-        signal_add(&signal_pipe, NULL);
+        ev_signal_init(&signal_usr2, sig_usr2, SIGUSR2);
+        ev_signal_start(EV_DEFAULT_ &signal_usr2);
 
-	init_comm(ev_base);
+        ev_signal_init(&signal_pipe, sig_pipe, SIGPIPE);
+        ev_signal_start(EV_DEFAULT_ &signal_pipe);
+
+	init_comm(EV_DEFAULT);
 
 	logx(LOG_NOTICE, "startup %s %s (pid %d)\n", _ident, _build, getpid());
 
-        event_base_loop(ev_base, 0);
+	ev_run(EV_DEFAULT, 0);
 
         return 0;
 }

@@ -22,6 +22,7 @@
 
 #include "config.h"
 #include <mand/logx.h>
+#include <mand/binary.h>
 
 #ifdef HAVE_TALLOC_TALLOC_H
 # include <talloc/talloc.h>
@@ -31,13 +32,13 @@
 
 #include <libdmconfig/codes.h>
 #include <libdmconfig/dmmsg.h>
+#include <libdmconfig/dmcontext.h>
 #include <libdmconfig/dmconfig.h>
+#include <libdmconfig/dm_dmconfig_rpc_stub.h>
+#include <libdmconfig/dm_dmclient_rpc_impl.h>
 
 #include "cfgd.h"
 #include "comm.h"
-
-static int session_valid = 0;
-static DMCONTEXT dmCtx;
 
 #define IF_IP     (1 << 0)
 #define IF_NEIGH  (1 << 1)
@@ -97,53 +98,82 @@ static void add_string_list(struct string_list *list, const void *data, size_t s
 }
 
 uint32_t
-decode_node_list(const char *prefix, DM_AVPGRP *grp, DECODE_CB cb, void *cb_data)
+decode_node_list(const char *prefix, DM2_AVPGRP *grp, DECODE_CB cb, void *cb_data)
 {
 	uint32_t r;
-	DM_OBJ *container;
+	DM2_AVPGRP container;
+	uint32_t code;
+	uint32_t vendor_id;
+	void *data;
+	size_t size;
+
 	char *name, *path;
+	uint16_t id;
 	uint32_t type;
 
-	if ((r = dm_expect_object(grp, &container)) != RC_OK
-	    || (r = dm_expect_string_type(container, AVP_NODE_NAME, VP_TRAVELPING, &name)) != RC_OK
-	    || (r = dm_expect_uint32_type(container, AVP_NODE_TYPE, VP_TRAVELPING, &type)) != RC_OK)
+	if ((r = dm_expect_avp(grp, &code, &vendor_id, &data, &size)) != RC_OK)
 		return r;
 
-	if (!(path = talloc_asprintf(container, "%s.%s", prefix, name)))
-		return RC_ERR_ALLOC;
+	if (vendor_id != VP_TRAVELPING)
+		return RC_ERR_MISC;
 
-	switch (type) {
-	case NODE_PARAMETER: {
-		uint32_t code;
-		uint32_t vendor_id;
-		void *data;
-		size_t size;
+	dm_init_avpgrp(grp->ctx, data, size, &container);
 
-		if ((r = dm_expect_any(container, &code, &vendor_id, &data, &size)) != RC_OK)
+	switch (code) {
+	case AVP_TABLE:
+		if ((r = dm_expect_string_type(&container, AVP_NAME, VP_TRAVELPING, &name)) != RC_OK)
+			return r;
+
+		if (!(path = talloc_asprintf(container.ctx, "%s.%s", prefix, name)))
+			return RC_ERR_ALLOC;
+
+		while (decode_node_list(path, &container, cb, cb_data) == RC_OK) {
+		}
+
+		break;
+
+	case AVP_INSTANCE:
+		if ((r = dm_expect_uint16_type(&container, AVP_NAME, VP_TRAVELPING, &id)) != RC_OK)
+			return r;
+
+		if (!(path = talloc_asprintf(container.ctx, "%s.%d", prefix, id)))
+			return RC_ERR_ALLOC;
+
+		while (decode_node_list(path, &container, cb, cb_data) == RC_OK) {
+		}
+
+		break;
+
+	case AVP_OBJECT:
+		if ((r = dm_expect_string_type(&container, AVP_NAME, VP_TRAVELPING, &name)) != RC_OK)
+			return r;
+
+		if (!(path = talloc_asprintf(container.ctx, "%s.%s", prefix, name)))
+			return RC_ERR_ALLOC;
+
+		while (decode_node_list(path, &container, cb, cb_data) == RC_OK) {
+		}
+
+		break;
+
+	case AVP_ELEMENT:
+		if ((r = dm_expect_string_type(&container, AVP_NAME, VP_TRAVELPING, &name)) != RC_OK
+		    || (r = dm_expect_uint32_type(&container, AVP_TYPE, VP_TRAVELPING, &type)) != RC_OK)
+			return r;
+
+		if (!(path = talloc_asprintf(container.ctx, "%s.%s", prefix, name)))
+			return RC_ERR_ALLOC;
+
+		if ((r = dm_expect_avp(&container, &code, &vendor_id, &data, &size)) != RC_OK)
 			return r;
 
 		cb(path, code, vendor_id, data, size, cb_data);
 		break;
-	}
-
-	case NODE_TABLE:
-	case NODE_OBJECT: {
-		DM_OBJ *obj;
-
-		cb(path, NODE_OBJECT, VP_TRAVELPING, NULL, 0, cb_data);
-
-		if ((r = dm_expect_object(container, &obj)) != RC_OK)
-			return r;
-
-		while (decode_node_list(path, obj, cb, cb_data) == RC_OK) {
-		}
-		break;
-	}
 
 	default:
-		printf("unknown object: %s, type: %d\n", path ,type);
-		break;
+		return RC_ERR_MISC;
 	}
+
 	return RC_OK;
 }
 
@@ -156,9 +186,6 @@ void ntp_cb(const char *name, uint32_t code, uint32_t vendor_id, void *data, siz
 {
 	struct ntp_servers *srvs = (struct ntp_servers *)cb_data;
 	const char *s;
-
-	if (code == NODE_OBJECT)
-		return;
 
 	if (!(s = strrchr(name, '.')))
 		return;
@@ -174,20 +201,25 @@ void ntp_cb(const char *name, uint32_t code, uint32_t vendor_id, void *data, siz
 	}
 }
 
-static void
-ntpListReceived(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data __attribute__((unused)), uint32_t answer_rc, DM_AVPGRP *answer_grp)
+void
+ntpListReceived(DMCONTEXT *socket, DMCONFIG_EVENT event, DM2_AVPGRP *grp, void *userdata __attribute__((unused)))
 {
+	uint32_t rc, answer_rc;
 	struct ntp_servers srvs;
 
-        if (event != DMCONFIG_ANSWER_READY || answer_rc)
-                CB_ERR("Couldn't list object.\n");
+        if (event != DMCONFIG_ANSWER_READY)
+                CB_ERR("Couldn't list object, ev=%d.\n", event);
+
+	if ((rc = dm_expect_uint32_type(grp, AVP_RC, VP_TRAVELPING, &answer_rc)) != RC_OK
+	    || answer_rc != RC_OK)
+                CB_ERR("Couldn't list object, rc=%d,%d.\n", rc, answer_rc);
 
 	srvs.count = 0;
-	srvs.server = talloc_array(answer_grp, char *, 16);
+	srvs.server = talloc_array(grp->ctx, char *, 16);
 	if (!srvs.server)
 		return;
 
-        while (decode_node_list("system.ntp.server", answer_grp, ntp_cb, &srvs) == RC_OK) {
+        while (decode_node_list("", grp, ntp_cb, &srvs) == RC_OK) {
         }
 
 	set_ntp_server(&srvs);
@@ -196,7 +228,7 @@ ntpListReceived(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data __attrib
 static void
 listSystemNtp(DMCONTEXT *dmCtx)
 {
-        if (dm_register_list(dmCtx, "system.ntp.server", 0, ntpListReceived, NULL))
+        if (rpc_db_list_async(dmCtx, 0, "system.ntp.server", ntpListReceived, NULL))
                 CB_ERR("Couldn't register LIST request.\n");
 }
 
@@ -216,9 +248,6 @@ void dns_cb(const char *name, uint32_t code, uint32_t vendor_id, void *data, siz
 	struct dns_params *info = (struct dns_params *)cb_data;
 	const char *s;
 
-	if (code == NODE_OBJECT)
-		return;
-
 	if (!(s = strrchr(name, '.')))
 		return;
 
@@ -229,18 +258,23 @@ void dns_cb(const char *name, uint32_t code, uint32_t vendor_id, void *data, siz
 	}
 }
 
-static void
-dnsListReceived(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data __attribute__((unused)), uint32_t answer_rc, DM_AVPGRP *answer_grp)
+void
+dnsListReceived(DMCONTEXT *socket, DMCONFIG_EVENT event, DM2_AVPGRP *grp, void *userdata __attribute__((unused)))
 {
+	uint32_t rc, answer_rc;
 	struct dns_params info;
 
-        if (event != DMCONFIG_ANSWER_READY || answer_rc)
-                CB_ERR("Couldn't list object.\n");
+        if (event != DMCONFIG_ANSWER_READY)
+                CB_ERR("Couldn't list object, ev=%d.\n", event);
 
-	new_string_list(answer_grp, &info.search);
-	new_string_list(answer_grp, &info.srvs);
+	if ((rc = dm_expect_uint32_type(grp, AVP_RC, VP_TRAVELPING, &answer_rc)) != RC_OK
+	    || answer_rc != RC_OK)
+                CB_ERR("Couldn't list object, rc=%d,%d.\n", rc, answer_rc);
 
-        while (decode_node_list("system.dns-resolver", answer_grp, dns_cb, &info) == RC_OK) {
+	new_string_list(grp->ctx, &info.search);
+	new_string_list(grp->ctx, &info.srvs);
+
+        while (decode_node_list("", grp, dns_cb, &info) == RC_OK) {
         }
 
 	set_dns(&info.search, &info.srvs);
@@ -249,7 +283,7 @@ dnsListReceived(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data __attrib
 static void
 listSystemDns(DMCONTEXT *dmCtx)
 {
-        if (dm_register_list(dmCtx, "system.dns-resolver", 0, dnsListReceived, NULL))
+        if (rpc_db_list_async(dmCtx, 0, "system.dns-resolver", dnsListReceived, NULL))
                 CB_ERR("Couldn't register LIST request.\n");
 }
 
@@ -277,16 +311,15 @@ void auth_cb(const char *name, uint32_t code, uint32_t vendor_id, void *data, si
 	struct auth_list *info = (struct auth_list *)cb_data;
 	const char *s;
 
-	if (code == NODE_OBJECT)
-		return;
-
 	if (!(s = strchr(name + 1, '.')))
+		return;
+	if (!(s = strchr(s + 1, '.')))
 		return;
 
 	if (strncmp(s + 1, "name", 4) == 0) {
 		struct auth_user *d;
 
-		printf("user (%d): %*s\n", info->count, size, data);
+		printf("user (%d): %*s\n", info->count, (int)size, (char *)data);
 		if (!(d = add_var_list((struct var_list *)info, sizeof(struct auth_user))))
 			return;
 
@@ -294,7 +327,7 @@ void auth_cb(const char *name, uint32_t code, uint32_t vendor_id, void *data, si
 
 		d->name = talloc_strndup(info->ctx, data, size);
 	} else if (strncmp(s + 1, "password", 8) == 0) {
-		printf("pass: %*s\n", size, data);
+		printf("pass: %*s\n", (int)size, (char *)data);
 		info->user[info->count - 1].password = talloc_strndup(info->ctx, data, size);
 	} else {
 		if (strncmp(s + 1, "ssh-key.", 8) == 0) {
@@ -307,16 +340,21 @@ void auth_cb(const char *name, uint32_t code, uint32_t vendor_id, void *data, si
 }
 
 static void
-AuthListReceived(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data, uint32_t answer_rc, DM_AVPGRP *answer_grp)
+AuthListReceived(DMCONTEXT *socket, DMCONFIG_EVENT event, DM2_AVPGRP *grp, void *userdata __attribute__((unused)))
 {
+	uint32_t rc, answer_rc;
 	struct auth_list auth;
 
-        if (event != DMCONFIG_ANSWER_READY || answer_rc)
-                CB_ERR("Couldn't list object.\n");
+        if (event != DMCONFIG_ANSWER_READY)
+                CB_ERR("Couldn't list object, ev=%d.\n", event);
 
-	new_var_list(answer_grp, (struct var_list *)&auth, sizeof(struct auth_user));
+	if ((rc = dm_expect_uint32_type(grp, AVP_RC, VP_TRAVELPING, &answer_rc)) != RC_OK
+	    || answer_rc != RC_OK)
+                CB_ERR("Couldn't list object, rc=%d,%d.\n", rc, answer_rc);
 
-        while (decode_node_list("", answer_grp, auth_cb, &auth) == RC_OK) {
+	new_var_list(grp->ctx, (struct var_list *)&auth, sizeof(struct auth_user));
+
+        while (decode_node_list("", grp, auth_cb, &auth) == RC_OK) {
         }
 
 	set_authentication(&auth);
@@ -325,7 +363,7 @@ AuthListReceived(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data, uint32
 static void
 listAuthentication(DMCONTEXT *dmCtx)
 {
-        if (dm_register_list(dmCtx, "system.authentication.user", 16, AuthListReceived, NULL))
+        if (rpc_db_list_async(dmCtx, 0, "system.authentication.user", AuthListReceived, NULL))
                 CB_ERR("Couldn't register LIST request.\n");
 }
 
@@ -425,12 +463,9 @@ void if_cb(const char *name, uint32_t code, uint32_t vendor_id, void *data, size
 	struct interface_list *info = (struct interface_list *)cb_data;
 	const char *s;
 
-	/* fprintf(stderr, "got : %s\n", name); */
-
-	if (code == NODE_OBJECT)
-		return;
-
 	if (!(s = strchr(name + 1, '.')))
+		return;
+	if (!(s = strchr(s + 1, '.')))
 		return;
 
 	if (strncmp(s + 1, "name", 4) == 0) {
@@ -453,17 +488,22 @@ void if_cb(const char *name, uint32_t code, uint32_t vendor_id, void *data, size
 }
 
 static void
-ifListReceived(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data, uint32_t answer_rc, DM_AVPGRP *answer_grp)
+ifListReceived(DMCONTEXT *socket, DMCONFIG_EVENT event, DM2_AVPGRP *grp, void *userdata)
 {
-	unsigned int flag = *(unsigned int *)user_data;
+	unsigned int flag = *(unsigned int *)userdata;
+	uint32_t rc, answer_rc;
 	struct interface_list info;
 
-        if (event != DMCONFIG_ANSWER_READY || answer_rc)
-                CB_ERR("Couldn't list object.\n");
+        if (event != DMCONFIG_ANSWER_READY)
+                CB_ERR("Couldn't list object, ev=%d.\n", event);
 
-	new_var_list(answer_grp, (struct var_list *)&info, sizeof(struct interface));
+	if ((rc = dm_expect_uint32_type(grp, AVP_RC, VP_TRAVELPING, &answer_rc)) != RC_OK
+	    || answer_rc != RC_OK)
+                CB_ERR("Couldn't list object, rc=%d,%d.\n", rc, answer_rc);
 
-        while (decode_node_list("", answer_grp, if_cb, &info) == RC_OK) {
+	new_var_list(grp->ctx, (struct var_list *)&info, sizeof(struct interface));
+
+        while (decode_node_list("", grp, if_cb, &info) == RC_OK) {
         }
 
 	if (flag | IF_NEIGH)
@@ -475,157 +515,163 @@ ifListReceived(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data, uint32_t
 static void
 listInterfaces(DMCONTEXT *dmCtx, unsigned int flags)
 {
-        if (dm_register_list(dmCtx, "interfaces.interface", 16, ifListReceived, &flags))
+        if (rpc_db_list_async(dmCtx, 16, "interfaces.interface", ifListReceived, &flags))
                 CB_ERR("Couldn't register LIST request.\n");
 }
 
-
 static void
-registeredParamNotify(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data __attribute__ ((unused)), uint32_t answer_rc, DM_AVPGRP *answer_grp)
+request_cb(DMCONTEXT *socket, DM_PACKET *pkt, DM2_AVPGRP *grp, void *userdata)
 {
-        if (event != DMCONFIG_ANSWER_READY || answer_rc)
-                CB_ERR("Couldn't actice recursive param notifications.");
-        logx(LOG_DEBUG, "Recursive param notification active.");
-}
+	DMC_REQUEST req;
+	DM2_REQUEST *answer = NULL;
 
-void
-eventBroadcast(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data __attribute__((unused)), DM_AVPGRP *grp)
-{
-	uint32_t type;
-	char *path;
+	req.hop2hop = dm_hop2hop_id(pkt);
+	req.end2end = dm_end2end_id(pkt);
+	req.code = dm_packet_code(pkt);
 
-        if (event != DMCONFIG_ANSWER_READY)
-                CB_ERR("Error while retrieving an event broadcast.\n");
+#ifdef LIBDMCONFIG_DEBUG
+	fprintf(stderr, "Received %s:\n",
+		dm_packet_flags(pkt) & CMD_FLAG_REQUEST ? "request" : "answer");
+	dump_dm_packet(pkt);
+#endif
 
-	printf("Broadcast....\n");
-
-	if (dm_expect_uint32_type(grp, AVP_EVENT_TYPE, VP_TRAVELPING, &type) != RC_OK
-	    || dm_expect_string_type(grp, AVP_PATH, VP_TRAVELPING, &path) != RC_OK)
+	if ((rpc_dmclient_switch(socket, &req, grp, &answer)) == RC_ERR_ALLOC) {
+		dm_context_shutdown(socket, DMCONFIG_OK);
+		dm_context_release(socket);
+		ev_break(socket->ev, EVBREAK_ALL);
 		return;
+	}
 
-	printf("Event: %d on \"%s\"\n", type, path);
-	logx(LOG_DEBUG, "Event: %d on \"%s\"\n", type, path);
-
-	if (strncmp(path, "system.ntp", 10) == 0)
-		listSystemNtp(dmCtx);
-	else if (strncmp(path, "system.dns-resolver", 19) == 0)
-		listSystemDns(dmCtx);
-	else if (strncmp(path, "system.authentication", 21) == 0)
-		listAuthentication(dmCtx);
-	else if (strncmp(path, "interfaces", 10) == 0)
-		listInterfaces(dmCtx, IF_IP | IF_NEIGH);
-
+	if (answer)
+		dm_enqueue(socket, answer, REPLY, NULL, NULL);
 }
 
-void
-activeNotification(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data __attribute__((unused)), DM_AVPGRP *grp)
+uint32_t rpc_client_active_notify(void *ctx, DM2_AVPGRP *obj)
 {
-        uint32_t type;
-
-        if (event != DMCONFIG_ANSWER_READY)
-                CB_ERR("Error while retrieving an active notification.\n");
+        uint32_t rc;
 
         do {
-                DM_AVPGRP *notify;
+		DM2_AVPGRP grp;
+		uint32_t type;
+		char *path;
 
-                if (dm_decode_notifications(grp, &type, &notify))
-                        CB_ERR("Couldn't decode active notifications\n");
+		if ((rc = dm_expect_object(obj, &grp)) != RC_OK
+		    || (rc = dm_expect_uint32_type(&grp, AVP_NOTIFY_TYPE, VP_TRAVELPING, &type)) != RC_OK
+		    || (rc = dm_expect_string_type(&grp, AVP_PATH, VP_TRAVELPING, &path)) != RC_OK)
+                        CB_ERR_RET(rc, "Couldn't decode active notifications, rc=%d\n", rc);
 
-		if (type == NOTIFY_PARAMETER_CHANGED) {
-                        char            *path, *str;
+		switch (type) {
+		case NOTIFY_INSTANCE_CREATED:
+                        logx(LOG_DEBUG, "Notification: Instance \"%s\" created\n", path);
+			break;
 
-                        uint32_t        data_type, vendor_id;
-                        uint8_t         flags;
-                        void            *data;
-                        size_t          len;
+		case NOTIFY_INSTANCE_DELETED:
+                        logx(LOG_DEBUG, "Notification: Instance \"%s\" deleted\n", path);
+			break;
 
-                        if (dm_decode_parameter_changed(notify, &path, &data_type))
-                                CB_ERR("Couldn't decode active notifications\n");
+		case NOTIFY_PARAMETER_CHANGED: {
+			struct dm2_avp avp;
+			char *str;
 
-                        if (dm_avpgrp_get_avp(notify, &data_type, &flags, &vendor_id, &data, &len) ||
-                            dm_decode_unknown_as_string(data_type, data, len, &str)) {
-                                free(path);
-                                CB_ERR("Couldn't decode active notifications\n");
-                        }
+			if ((rc = dm_expect_uint32_type(&grp, AVP_TYPE, VP_TRAVELPING, &type)) != RC_OK
+			    || (rc = dm_expect_value(&grp, &avp)) != RC_OK
+			    || (rc = dm_decode_unknown_as_string(type, avp.data, avp.size, &str)) != RC_OK)
+				CB_ERR_RET(rc, "Couldn't decode parameter changed notifications, rc=%d\n", rc);
 
                         logx(LOG_DEBUG, "Notification: Parameter \"%s\" changed to \"%s\"\n", path, str);
 			set_value(path, str);
 
-                        free(path);
-                        free(str);
-                } else if (type != NOTIFY_NOTHING)
-                        logx(LOG_DEBUG, "Notification: Warning, unknown type\n");
+			break;
+                }
+		default:
+                        logx(LOG_DEBUG, "Notification: Warning, unknown type: %d\n", type);
+			break;
+		}
+	} while ((rc = dm_expect_end(obj)) != RC_OK);
 
-                dm_grp_free(notify);
-        } while (type != NOTIFY_NOTHING);
+	return dm_expect_end(obj);
 }
 
-static void
-subscribedNotify(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data __attribute__ ((unused)), uint32_t answer_rc, DM_AVPGRP *answer_grp)
+uint32_t rpc_client_event_broadcast(void *ctx, const char *path, uint32_t type)
 {
-        if (event != DMCONFIG_ANSWER_READY || answer_rc)
-                CB_ERR("Couldn't subscribe notifications.");
-        logx(LOG_DEBUG, "Subscribed notifications.");
+	printf("Event: %d on \"%s\"\n", type, path);
+	logx(LOG_DEBUG, "Event: %d on \"%s\"\n", type, path);
 
-        if(dm_register_recursive_param_notify(dmCtx, 1, "system.ntp.server", registeredParamNotify, NULL))
-		CB_ERR("Couldn't register RECURSIVE PARAM NOTIFY request.");
-        if(dm_register_recursive_param_notify(dmCtx, 1, "system.dns-resolver", registeredParamNotify, NULL))
-		CB_ERR("Couldn't register RECURSIVE PARAM NOTIFY request.");
-        logx(LOG_DEBUG, "RECURSIVE PARAM NOTIFY request registered.");
+	if (strncmp(path, "system.ntp", 10) == 0)
+		listSystemNtp(ctx);
+	else if (strncmp(path, "system.dns-resolver", 19) == 0)
+		listSystemDns(ctx);
+	else if (strncmp(path, "system.authentication", 21) == 0)
+		listAuthentication(ctx);
+	else if (strncmp(path, "interfaces", 10) == 0)
+		listInterfaces(ctx, IF_IP | IF_NEIGH);
+
+	return RC_OK;
 }
 
-static void
-sessionStarted(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *user_data __attribute__ ((unused)), uint32_t answer_rc, DM_AVPGRP *answer_grp)
- {
-        if (event != DMCONFIG_ANSWER_READY || answer_rc)
-                CB_ERR("Couldn't start session.");
-        logx(LOG_DEBUG, "Session started.");
+static uint32_t
+socketConnected(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *userdata __attribute__ ((unused)))
+{
+	uint32_t rc;
 
-        if (dm_decode_start_session(dmCtx, answer_grp))
-                CB_ERR("Couldn't decode sessionid.");
+        if (event != DMCONFIG_CONNECTED) {
+		ev_break(dmCtx->ev, EVBREAK_ALL);
+                CB_ERR_RET(RC_ERR_MISC, "Connecting socket unsuccessful.");
+	}
 
-	session_valid = 1;
-	dm_register_event_handler(dmCtx, eventBroadcast, NULL);
+        logx(LOG_DEBUG, "Socket connected.");
 
-        if(dm_register_subscribe_notify(dmCtx, activeNotification, NULL, subscribedNotify, NULL))
-                CB_ERR("Couldn't register SUBSCRIBE NOTIFY request.");
+	if ((rc = rpc_startsession(dmCtx, CMD_FLAG_READWRITE, 0, NULL)) != RC_OK) {
+		ev_break(dmCtx->ev, EVBREAK_ALL);
+                CB_ERR_RET(rc, "Couldn't register start session request, rc=%d.", rc);
+	}
+
+        logx(LOG_DEBUG, "Start session request registered.");
+
+	if ((rc = rpc_subscribe_notify(dmCtx, NULL)) != RC_OK) {
+		ev_break(dmCtx->ev, EVBREAK_ALL);
+                CB_ERR_RET(rc, "Couldn't register SUBSCRIBE NOTIFY request, rc=%d.", rc);
+	}
         logx(LOG_DEBUG, "Notification subscription request registered.");
+
+        if ((rc = rpc_recursive_param_notify(dmCtx, ACTIVE_NOTIFY, "system.ntp.server", NULL)) != RC_OK) {
+		ev_break(dmCtx->ev, EVBREAK_ALL);
+		CB_ERR_RET(rc, "Couldn't register RECURSIVE PARAM NOTIFY request, rc=%d.", rc);
+	}
+
+	if ((rc = rpc_recursive_param_notify(dmCtx, ACTIVE_NOTIFY, "system.dns-resolver", NULL)) != RC_OK) {
+		ev_break(dmCtx->ev, EVBREAK_ALL);
+		CB_ERR_RET(rc, "Couldn't register RECURSIVE PARAM NOTIFY request, rc=%d.", rc);
+	}
+
+        logx(LOG_DEBUG, "RECURSIVE PARAM NOTIFY request registered.");
 
 	listSystemNtp(dmCtx);
 	listSystemDns(dmCtx);
 	listAuthentication(dmCtx);
 	listInterfaces(dmCtx, IF_IP | IF_NEIGH);
+
+	return RC_OK;
 }
 
-static void
-socketConnected(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *userdata __attribute__ ((unused)))
+void init_comm(struct ev_loop *loop)
 {
-	struct timeval timeout = { .tv_sec = 120, .tv_usec = 0 };
+	uint32_t rc;
+	DMCONTEXT *ctx;
 
-        if (event != DMCONFIG_CONNECTED)
-                CB_ERR("Connecting socket unsuccessful.");
-        logx(LOG_DEBUG, "Socket connected.");
-
-        if (dm_register_start_session(dmCtx, CMD_FLAG_READWRITE, &timeout, NULL, sessionStarted, NULL))
-                CB_ERR("Couldn't register start session request.");
-        logx(LOG_DEBUG, "Start session request registered.");
-}
-
-void init_comm(struct event_base *base)
-{
-        memset(&dmCtx, 0, sizeof(DMCONTEXT));
-	dm_context_set_event_base(&dmCtx, base);
-
-        if (dm_create_socket(&dmCtx, AF_INET)) {
-                logx(LOG_DEBUG, "Couldn't create socket.");
+	if (!(ctx = dm_context_new())) {
+                logx(LOG_DEBUG, "Couldn't create socket context.");
                 return;
         }
-        logx(LOG_DEBUG, "Socket created.");
 
-        if (dm_register_connect_callback(&dmCtx, AF_INET, socketConnected, NULL)) {
-                logx(LOG_DEBUG, "Couldn't register connect callback or connecting unsuccessful.");
-                dm_shutdown_socket(&dmCtx);
+	dm_context_init(ctx, loop, AF_INET, NULL, socketConnected, request_cb);
+
+	/* connect */
+	if ((rc = dm_connect_async(ctx)) != RC_OK) {
+                logx(LOG_DEBUG, "Couldn't register connect callback or connecting unsuccessful, rc=%d.", rc);
+		dm_context_shutdown(ctx, DMCONFIG_ERROR_CONNECTING);
+		dm_context_release(ctx);
                 return;
         }
-        logx(LOG_DEBUG, "Connect callback registered.");
+	logx(LOG_DEBUG, "Connect callback registered.");
 }

@@ -61,8 +61,9 @@ AC_CHECK_HEADERS([talloc.h talloc/talloc.h])
 AC_CHECK_LIB([talloc], [talloc_named_const],, AC_MSG_ERROR(Required library talloc missing))
 AC_CHECK_LIB([dmutils], [logx],,              AC_MSG_ERROR(Required library dmutils missing))
 AC_CHECK_HEADER([mand/logx.h])
-AC_CHECK_LIB([dmconfig], [dm_init_socket],,   AC_MSG_ERROR(Required library dmconfig missing))
+AC_CHECK_LIB([dmconfig], [dm_context_init],,   AC_MSG_ERROR(Required library dmconfig missing))
 AC_CHECK_HEADER([libdmconfig/dmconfig.h])
+AC_CHECK_LIB([dm_dmclient], [rpc_startsession],,   AC_MSG_ERROR(Required library dmconfig missing))
 
 AC_CONFIG_FILES([
         Makefile
