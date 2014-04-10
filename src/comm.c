@@ -634,12 +634,12 @@ socketConnected(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *userdata __attribu
 	}
         logx(LOG_DEBUG, "Notification subscription request registered.");
 
-        if ((rc = rpc_recursive_param_notify(dmCtx, ACTIVE_NOTIFY, "system.ntp.server", NULL)) != RC_OK) {
+        if ((rc = rpc_recursive_param_notify(dmCtx, NOTIFY_ACTIVE, "system.ntp.server", NULL)) != RC_OK) {
 		ev_break(dmCtx->ev, EVBREAK_ALL);
 		CB_ERR_RET(rc, "Couldn't register RECURSIVE PARAM NOTIFY request, rc=%d.", rc);
 	}
 
-	if ((rc = rpc_recursive_param_notify(dmCtx, ACTIVE_NOTIFY, "system.dns-resolver", NULL)) != RC_OK) {
+	if ((rc = rpc_recursive_param_notify(dmCtx, NOTIFY_ACTIVE, "system.dns-resolver", NULL)) != RC_OK) {
 		ev_break(dmCtx->ev, EVBREAK_ALL);
 		CB_ERR_RET(rc, "Couldn't register RECURSIVE PARAM NOTIFY request, rc=%d.", rc);
 	}
