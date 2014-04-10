@@ -80,6 +80,8 @@ struct interface_list {
 	struct interface *iface;
 };
 
+const char *wrt_ifname(const char *name);
+
 void set_ntp_server(const struct ntp_servers *servers);
 void set_dns(const struct string_list *search, const struct string_list *servers);
 void set_authentication(const struct auth_list *auth);

@@ -14,9 +14,14 @@
 #include <sys/time.h>
 #include <sys/tree.h>
 #include <sys/queue.h>
+#include <sys/ioctl.h>
 #include <arpa/inet.h>
+#include <net/if.h>
 #include <errno.h>
 #include <ctype.h>
+
+#include <linux/ethtool.h>
+#include <linux/sockios.h>
 
 #include <ev.h>
 
@@ -609,6 +614,105 @@ uint32_t rpc_client_event_broadcast(void *ctx, const char *path, uint32_t type)
 	return RC_OK;
 }
 
+static uint32_t if_ioctl(int d, int request, void *data)
+{
+	int result;
+
+	if (ioctl(d, request, data) == -1) {
+		do {
+			result = close(d);
+		} while (result == -1 && errno == EINTR);
+		return RC_ERR_MISC;
+	}
+	return RC_OK;
+}
+
+uint32_t rpc_client_get_interface_state(void *ctx, const char *if_name, DM2_REQUEST *answer)
+{
+	int fd;
+	FILE *fp;
+	char line[1024];
+	struct ifreq ifr;
+	struct ethtool_cmd cmd;
+	uint32_t rc;
+	const char *dev;
+
+	char *device;
+        unsigned long rec_pkt = 0, rec_oct = 0, rec_err = 0, rec_drop = 0;
+        unsigned long snd_pkt = 0, snd_oct = 0, snd_err = 0, snd_drop = 0;
+	int scan_count;
+
+	printf("rpc_client_get_interface_state: %s\n", if_name);
+
+	dev = wrt_ifname(if_name);
+
+	printf("#1\n");
+	fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+	if (fd == -1)
+		return RC_ERR_MISC;
+
+	strncpy(ifr.ifr_name, dev, IF_NAMESIZE);
+
+	printf("#2\n");
+	if ((rc = if_ioctl(fd, SIOCGIFINDEX, &ifr)) != RC_OK
+	    || (rc = dm_add_int32(answer, AVP_INT32, VP_TRAVELPING, ifr.ifr_ifindex)) != RC_OK)
+		return rc;
+
+	printf("#3\n");
+	if ((rc = if_ioctl(fd, SIOCGIFFLAGS, &ifr)) != RC_OK
+	    || (rc = dm_add_uint32(answer, AVP_UINT32, VP_TRAVELPING, ifr.ifr_flags)) != RC_OK)
+		return rc;
+
+	printf("#4\n");
+	if ((rc = if_ioctl(fd, SIOCGIFHWADDR, &ifr)) != RC_OK
+	    || (rc = dm_add_raw(answer, AVP_BINARY, VP_TRAVELPING, &ifr.ifr_hwaddr, 6)) != RC_OK)
+	    return rc;
+
+	printf("#5\n");
+	ifr.ifr_data = (void *)&cmd;
+	cmd.cmd = ETHTOOL_GSET; /* "Get settings" */
+	if ((rc = if_ioctl(fd, SIOCETHTOOL, &ifr)) != RC_OK) {
+		if ((rc = dm_add_uint32(answer, AVP_UINT32, VP_TRAVELPING, 0)) != RC_OK)
+			return rc;
+	} else
+		if ((rc = dm_add_uint32(answer, AVP_UINT32, VP_TRAVELPING, ethtool_cmd_speed(&cmd))) != RC_OK)
+			return rc;
+
+	printf("#6\n");
+
+	if (!(fp = fopen("/proc/net/dev", "r")))
+		return RC_ERR_MISC;
+
+	if (!fgets(line, sizeof(line), fp)) fprintf(stderr, "Cannot parse %s.\n", "/proc/net/dev"); /* ignore first line */
+	if (!fgets(line, sizeof(line), fp)) fprintf(stderr, "Cannot parse %s.\n", "/proc/net/dev");
+
+	while (!feof(fp)) {
+		scan_count = fscanf(fp, " %m[^:]:%lu %lu %lu %lu %*u %*u %*u %*u %lu %lu %lu %lu %*u %*u %*s",
+				    &device,
+				    &rec_oct, &rec_pkt, &rec_err, &rec_drop,
+				    &snd_oct, &snd_pkt, &snd_err, &snd_drop);
+		printf("scan_count: %d, '%s', '%s'\n", scan_count, device, dev);
+		if (scan_count == 9 && strcmp(dev, device) == 0)
+			break;
+	}
+	fclose(fp);
+	free(device);
+
+	if ((dm_add_object(answer)) != RC_OK
+	    || (rc = dm_add_uint64(answer, AVP_UINT64, VP_TRAVELPING, rec_oct)) != RC_OK
+	    || (rc = dm_add_uint64(answer, AVP_UINT64, VP_TRAVELPING, rec_pkt)) != RC_OK
+	    || (rc = dm_add_uint64(answer, AVP_UINT64, VP_TRAVELPING, rec_err)) != RC_OK
+	    || (rc = dm_add_uint64(answer, AVP_UINT64, VP_TRAVELPING, rec_drop)) != RC_OK
+	    || (rc = dm_add_uint64(answer, AVP_UINT64, VP_TRAVELPING, snd_oct)) != RC_OK
+	    || (rc = dm_add_uint64(answer, AVP_UINT64, VP_TRAVELPING, snd_pkt)) != RC_OK
+	    || (rc = dm_add_uint64(answer, AVP_UINT64, VP_TRAVELPING, snd_err)) != RC_OK
+	    || (rc = dm_add_uint64(answer, AVP_UINT64, VP_TRAVELPING, snd_drop)) != RC_OK
+	    || (rc = dm_finalize_group(answer)) != RC_OK)
+		return rc;
+
+	return RC_OK;
+}
+
 static uint32_t
 socketConnected(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *userdata __attribute__ ((unused)))
 {
@@ -627,6 +731,12 @@ socketConnected(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *userdata __attribu
 	}
 
         logx(LOG_DEBUG, "Start session request registered.");
+
+	if ((rc = rpc_register_role(dmCtx, "-state")) != RC_OK) {
+		ev_break(dmCtx->ev, EVBREAK_ALL);
+                CB_ERR_RET(rc, "Couldn't register role, rc=%d.", rc);
+	}
+        logx(LOG_DEBUG, "Role registered.");
 
 	if ((rc = rpc_subscribe_notify(dmCtx, NULL)) != RC_OK) {
 		ev_break(dmCtx->ev, EVBREAK_ALL);

@@ -168,7 +168,7 @@ void set_if_addr(struct interface_list *info)
 	}
 }
 
-static const char *wrt_ifname(const char *name)
+const char *wrt_ifname(const char *name)
 {
 	if (strcmp("lan", name) == 0)
 		return "br-lan";
