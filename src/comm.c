@@ -16,9 +16,11 @@
 #include <sys/queue.h>
 #include <sys/ioctl.h>
 #include <arpa/inet.h>
-#include <net/if.h>
 #include <errno.h>
 #include <ctype.h>
+
+#include <netlink/route/link.h>
+#include <netlink/route/addr.h>
 
 #include <linux/ethtool.h>
 #include <linux/sockios.h>
@@ -627,6 +629,23 @@ static uint32_t if_ioctl(int d, int request, void *data)
 	return RC_OK;
 }
 
+void add_addr_to_answer(struct nl_object *obj, void *data)
+{
+	DM2_REQUEST *answer = data;
+	struct nl_addr *naddr = rtnl_addr_get_local((struct rtnl_addr *) obj);
+	int family = nl_addr_get_family(naddr);
+
+	printf("#9\n");
+
+	printf("family: %d, prefix: %d\n", family, nl_addr_get_prefixlen(naddr));
+
+	if (dm_add_object(answer) != RC_OK
+	    || dm_add_address(answer, AVP_ADDRESS, VP_TRAVELPING, family, nl_addr_get_binary_addr(naddr)) != RC_OK
+	    || dm_add_uint8(answer, AVP_UINT8, VP_TRAVELPING, nl_addr_get_prefixlen(naddr)) != RC_OK
+	    || dm_finalize_group(answer) != RC_OK)
+		return;
+}
+
 uint32_t rpc_client_get_interface_state(void *ctx, const char *if_name, DM2_REQUEST *answer)
 {
 	int fd;
@@ -651,7 +670,7 @@ uint32_t rpc_client_get_interface_state(void *ctx, const char *if_name, DM2_REQU
 	if (fd == -1)
 		return RC_ERR_MISC;
 
-	strncpy(ifr.ifr_name, dev, IF_NAMESIZE);
+	strncpy(ifr.ifr_name, dev, IFNAMSIZ);
 
 	printf("#2\n");
 	if ((rc = if_ioctl(fd, SIOCGIFINDEX, &ifr)) != RC_OK
@@ -698,7 +717,7 @@ uint32_t rpc_client_get_interface_state(void *ctx, const char *if_name, DM2_REQU
 	fclose(fp);
 	free(device);
 
-	if ((dm_add_object(answer)) != RC_OK
+	if ((rc = dm_add_object(answer)) != RC_OK
 	    || (rc = dm_add_uint64(answer, AVP_UINT64, VP_TRAVELPING, rec_oct)) != RC_OK
 	    || (rc = dm_add_uint64(answer, AVP_UINT64, VP_TRAVELPING, rec_pkt)) != RC_OK
 	    || (rc = dm_add_uint64(answer, AVP_UINT64, VP_TRAVELPING, rec_err)) != RC_OK
@@ -709,6 +728,49 @@ uint32_t rpc_client_get_interface_state(void *ctx, const char *if_name, DM2_REQU
 	    || (rc = dm_add_uint64(answer, AVP_UINT64, VP_TRAVELPING, snd_drop)) != RC_OK
 	    || (rc = dm_finalize_group(answer)) != RC_OK)
 		return rc;
+
+	/* read IP's from NL */
+
+	struct nl_sock *socket = nl_socket_alloc();
+	struct nl_cache *link_cache;
+	struct nl_cache *addr_cache;
+
+	if (nl_connect(socket, NETLINK_ROUTE) < 0)
+		return RC_ERR_MISC;
+
+	printf("#7\n");
+
+	if (rtnl_link_alloc_cache(socket, AF_UNSPEC, &link_cache) < 0
+	    || rtnl_addr_alloc_cache(socket, &addr_cache) < 0) {
+		nl_socket_free(socket);
+		return RC_ERR_ALLOC;
+	}
+
+	printf("#8\n");
+
+	struct rtnl_addr *filter = rtnl_addr_alloc();
+	rtnl_addr_set_ifindex(filter, rtnl_link_name2i(link_cache, dev));
+
+	rtnl_addr_set_family(filter, AF_INET);
+
+	if ((rc = dm_add_object(answer)) != RC_OK)
+		return rc;
+	nl_cache_foreach_filter(addr_cache, (struct nl_object *) filter, add_addr_to_answer, answer);
+	if ((rc = dm_finalize_group(answer)) != RC_OK)
+		return rc;
+
+	rtnl_addr_set_family(filter, AF_INET6);
+
+	if ((rc = dm_add_object(answer)) != RC_OK)
+		return rc;
+	nl_cache_foreach_filter(addr_cache, (struct nl_object *) filter, add_addr_to_answer, answer);
+	if ((rc = dm_finalize_group(answer)) != RC_OK)
+		return rc;
+
+	nl_cache_free(addr_cache);
+	nl_cache_free(link_cache);
+	rtnl_addr_put(filter);
+	nl_socket_free(socket);
 
 	return RC_OK;
 }

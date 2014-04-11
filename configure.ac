@@ -65,6 +65,11 @@ AC_CHECK_LIB([dmconfig], [dm_context_init],,   AC_MSG_ERROR(Required library dmc
 AC_CHECK_HEADER([libdmconfig/dmconfig.h])
 AC_CHECK_LIB([dm_dmclient], [rpc_startsession],,   AC_MSG_ERROR(Required library dmconfig missing))
 
+# Check for libnl3 >=3.2.8. If present enable remus network buffering.
+PKG_CHECK_MODULES([LIBNL3], [libnl-3.0 >= 3.2.8 libnl-route-3.0 >= 3.2.8])
+AC_SUBST([LIBNL3_LIBS])
+AC_SUBST([LIBNL3_CFLAGS])
+
 AC_CONFIG_FILES([
         Makefile
         src/Makefile
