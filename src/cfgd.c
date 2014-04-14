@@ -194,16 +194,12 @@ void set_value(char *path, const char *str)
 {
 	fprintf(stderr, "Parameter \"%s\" changed to \"%s\"\n", path, str);
 
-#if 0
-	if (strncmp(path, "system.ntp.", 11) == 0) {
-		char *s;
-		long id = strtol(path + 11, &s, 10);
-
-		if (s && strncmp(s, ".udp.address", 12) == 0) {
-			vasystem("uci set system.ntp.@server[%ld]=%s", id - 1, str);
-		}
+	if (strcmp(path, "system.hostname") == 0) {
+		if (sethostname(str, strlen(str)) < 0)
+			fprintf(stderr, "setting hostname failed with: %m\n");
+		vasystem("uci set system.@system[0].hostname='%s'", str);
+		vsystem("uci commit system.@system[0].hostname");
 	}
-#endif
 }
 
 static void sig_usr1(EV_P_ ev_signal *w, int revents)

@@ -812,6 +812,79 @@ exit_nl:
 }
 
 static uint32_t
+init_hostname(DMCONTEXT *dmCtx)
+{
+	uint32_t rc;
+	char hostname[256];
+	gethostname(hostname, sizeof(hostname));
+
+	struct rpc_db_set_path_value set_value = {
+		.path  = "system.hostname",
+		.value = {
+			.code = AVP_STRING,
+			.vendor_id = VP_TRAVELPING,
+			.data = hostname,
+			.size = strlen(hostname)
+		},
+	};
+	if ((rc = rpc_db_set(dmCtx, 1, &set_value, NULL)) != RC_OK) {
+		ev_break(dmCtx->ev, EVBREAK_ALL);
+		CB_ERR_RET(rc, "Failed to report hostname, rc=%d.", rc);
+	}
+
+        if ((rc = rpc_param_notify(dmCtx, NOTIFY_ACTIVE, 1, &set_value.path, NULL)) != RC_OK) {
+		ev_break(dmCtx->ev, EVBREAK_ALL);
+		CB_ERR_RET(rc, "Couldn't register PARAM NOTIFY request, rc=%d.", rc);
+	}
+
+	return RC_OK;
+}
+
+static uint32_t
+init_timezone(DMCONTEXT *dmCtx)
+{
+	uint32_t rc;
+	FILE *pf;
+	char data[2048];
+	struct rpc_db_set_path_value set_value = {
+		.path  = "system.clock.timezone-location",
+		.value = {
+			.code = AVP_STRING,
+			.vendor_id = VP_TRAVELPING,
+			.data = &data
+		},
+	};
+
+
+	pf = popen("uci get system.@system[0].zonename", "r");
+
+	if(!pf) {
+	       fprintf(stderr, "Could not open pipe for output.\n");
+	       return RC_OK;
+	}
+
+	if (!fgets(data, sizeof(data) , pf))
+		;
+	pclose(pf);
+
+	if (strlen(data) != 0) {
+		set_value.value.size = strlen(data);
+
+		if ((rc = rpc_db_set(dmCtx, 1, &set_value, NULL)) != RC_OK) {
+			ev_break(dmCtx->ev, EVBREAK_ALL);
+			CB_ERR_RET(rc, "Failed to report timezone, rc=%d.", rc);
+		}
+	}
+
+        if ((rc = rpc_param_notify(dmCtx, NOTIFY_ACTIVE, 1, &set_value.path, NULL)) != RC_OK) {
+		ev_break(dmCtx->ev, EVBREAK_ALL);
+		CB_ERR_RET(rc, "Couldn't register PARAM NOTIFY request, rc=%d.", rc);
+	}
+
+	return RC_OK;
+}
+
+static uint32_t
 socketConnected(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *userdata __attribute__ ((unused)))
 {
 	uint32_t rc;
@@ -841,6 +914,11 @@ socketConnected(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *userdata __attribu
                 CB_ERR_RET(rc, "Couldn't register SUBSCRIBE NOTIFY request, rc=%d.", rc);
 	}
         logx(LOG_DEBUG, "Notification subscription request registered.");
+
+	if (init_hostname(dmCtx) != RC_OK)
+		return rc;
+	if (init_timezone(dmCtx) != RC_OK)
+		return rc;
 
         if ((rc = rpc_recursive_param_notify(dmCtx, NOTIFY_ACTIVE, "system.ntp.server", NULL)) != RC_OK) {
 		ev_break(dmCtx->ev, EVBREAK_ALL);
