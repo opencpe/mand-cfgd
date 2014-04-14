@@ -66,6 +66,30 @@
 		return ret;			\
 	} while (0)
 
+int sys_scan(const char *file, const char *fmt, ...)
+{
+	FILE *fin;
+	int rc, _errno;
+	va_list vlist;
+
+	fin = fopen(file, "r");
+	if (!fin) {
+		errno = 0;
+		return EOF;
+	}
+
+	va_start(vlist, fmt);
+	errno = 0;
+	rc = vfscanf(fin, fmt, vlist);
+	_errno = errno;
+	va_end(vlist);
+
+	fclose(fin);
+
+	errno = _errno;
+	return rc;
+}
+
 typedef void (*DECODE_CB)(const char *name, uint32_t code, uint32_t vendor_id, void *data, size_t size, void *cb_data);
 
 static void new_var_list(void *ctx, struct var_list *list, size_t size)
@@ -639,13 +663,17 @@ void add_neigh_to_answer(struct nl_object *obj, void *data)
 	int family = rtnl_neigh_get_family(neigh);
 	uint8_t *dst = nl_addr_get_binary_addr(rtnl_neigh_get_dst(neigh));
 	struct nl_addr *lladdr = rtnl_neigh_get_lladdr(neigh);
-
+	uint32_t state = rtnl_neigh_get_state(neigh);
+	uint32_t flags = rtnl_neigh_get_flags(neigh);
 	nl_addr2str(lladdr, buf, sizeof(buf));
+	uint8_t origin = (state == NUD_PERMANENT) ? 1 : 2;
+	uint8_t is_router = ((flags & NTF_ROUTER) != 0);
 
 	if (dm_add_object(answer) != RC_OK
 	    || dm_add_address(answer, AVP_ADDRESS, VP_TRAVELPING, family, dst) != RC_OK
 	    || dm_add_string(answer, AVP_STRING, VP_TRAVELPING, buf) != RC_OK
-	    || dm_add_uint8(answer, AVP_ENUM, VP_TRAVELPING, 0) != RC_OK
+	    || dm_add_uint8(answer, AVP_ENUM, VP_TRAVELPING, origin) != RC_OK
+	    || dm_add_uint8(answer, AVP_BOOL, VP_TRAVELPING, is_router) != RC_OK
 	    || dm_finalize_group(answer) != RC_OK)
 		return;
 }
@@ -745,8 +773,11 @@ uint32_t rpc_client_get_interface_state(void *ctx, const char *if_name, DM2_REQU
 	struct nl_cache *link_cache;
 	struct nl_cache *addr_cache;
 	struct nl_cache *neigh_cache;
+	struct rtnl_link *link;
 	struct rtnl_addr *addr_filter = NULL;
 	struct rtnl_neigh *neigh_filter = NULL;
+	int forward;
+	uint32_t mtu;
 
 	if (nl_connect(socket, NETLINK_ROUTE) < 0)
 		return RC_ERR_MISC;
@@ -760,23 +791,30 @@ uint32_t rpc_client_get_interface_state(void *ctx, const char *if_name, DM2_REQU
 
 	rc = RC_OK;
 
-	ifindex = rtnl_link_name2i(link_cache, dev);
+	link = rtnl_link_get_by_name(link_cache, dev);
+	ifindex = rtnl_link_get_ifindex(link);
+	mtu = rtnl_link_get_mtu(link);
 
 	addr_filter = rtnl_addr_alloc();
 	rtnl_addr_set_ifindex(addr_filter, ifindex);
+
+	/* IPv4 group */
+	if ((rc = dm_add_object(answer)) != RC_OK)
+		goto exit_nl;
+
+	snprintf(line, sizeof(line), "/proc/sys/net/ipv4/conf/%s/forwarding", dev);
+	sys_scan(line, "%u", &forward);
+
+	printf("IPv4 Forward: %d\n", forward);
+	if ((rc = dm_add_uint8(answer, AVP_BOOL, VP_TRAVELPING, forward)) != RC_OK
+	    || (rc = dm_add_uint32(answer, AVP_UINT32, VP_TRAVELPING, mtu)) != RC_OK)
+		goto exit_nl;
 
 	rtnl_addr_set_family(addr_filter, AF_INET);
 
 	if ((rc = dm_add_object(answer)) != RC_OK)
 		goto exit_nl;
-	nl_cache_foreach_filter(addr_cache, (struct nl_object *) addr_filter, add_addr_to_answer, answer);
-	if ((rc = dm_finalize_group(answer)) != RC_OK)
-		goto exit_nl;
 
-	rtnl_addr_set_family(addr_filter, AF_INET6);
-
-	if ((rc = dm_add_object(answer)) != RC_OK)
-		goto exit_nl;
 	nl_cache_foreach_filter(addr_cache, (struct nl_object *) addr_filter, add_addr_to_answer, answer);
 	if ((rc = dm_finalize_group(answer)) != RC_OK)
 		goto exit_nl;
@@ -792,11 +830,39 @@ uint32_t rpc_client_get_interface_state(void *ctx, const char *if_name, DM2_REQU
 	if ((rc = dm_finalize_group(answer)) != RC_OK)
 		goto exit_nl;
 
+	/* IPv4 group */
+	if ((rc = dm_finalize_group(answer)) != RC_OK)
+		goto exit_nl;
+
+	/* IPv6 group */
+	if ((rc = dm_add_object(answer)) != RC_OK)
+		goto exit_nl;
+
+	snprintf(line, sizeof(line), "/proc/sys/net/ipv6/conf/%s/forwarding", dev);
+	sys_scan(line, "%u", &forward);
+
+	printf("IPv6 Forward: %d\n", forward);
+	if ((rc = dm_add_uint8(answer, AVP_BOOL, VP_TRAVELPING, forward)) != RC_OK
+	    || (rc = dm_add_uint32(answer, AVP_UINT32, VP_TRAVELPING, mtu)) != RC_OK)
+		goto exit_nl;
+
+	rtnl_addr_set_family(addr_filter, AF_INET6);
+
+	if ((rc = dm_add_object(answer)) != RC_OK)
+		goto exit_nl;
+	nl_cache_foreach_filter(addr_cache, (struct nl_object *) addr_filter, add_addr_to_answer, answer);
+	if ((rc = dm_finalize_group(answer)) != RC_OK)
+		goto exit_nl;
+
 	rtnl_neigh_set_family(neigh_filter, AF_INET6);
 
 	if ((rc = dm_add_object(answer)) != RC_OK)
 		goto exit_nl;
 	nl_cache_foreach_filter(neigh_cache, (struct nl_object *) neigh_filter, add_neigh_to_answer, answer);
+	if ((rc = dm_finalize_group(answer)) != RC_OK)
+		goto exit_nl;
+
+	/* IPv6 group */
 	if ((rc = dm_finalize_group(answer)) != RC_OK)
 		goto exit_nl;
 
