@@ -21,6 +21,7 @@
 
 #include <netlink/route/link.h>
 #include <netlink/route/addr.h>
+#include <netlink/route/neighbour.h>
 
 #include <linux/ethtool.h>
 #include <linux/sockios.h>
@@ -629,6 +630,26 @@ static uint32_t if_ioctl(int d, int request, void *data)
 	return RC_OK;
 }
 
+void add_neigh_to_answer(struct nl_object *obj, void *data)
+{
+	char buf[32];
+	DM2_REQUEST *answer = data;
+	struct rtnl_neigh *neigh = (struct rtnl_neigh *)obj;
+
+	int family = rtnl_neigh_get_family(neigh);
+	uint8_t *dst = nl_addr_get_binary_addr(rtnl_neigh_get_dst(neigh));
+	struct nl_addr *lladdr = rtnl_neigh_get_lladdr(neigh);
+
+	nl_addr2str(lladdr, buf, sizeof(buf));
+
+	if (dm_add_object(answer) != RC_OK
+	    || dm_add_address(answer, AVP_ADDRESS, VP_TRAVELPING, family, dst) != RC_OK
+	    || dm_add_string(answer, AVP_STRING, VP_TRAVELPING, buf) != RC_OK
+	    || dm_add_uint8(answer, AVP_ENUM, VP_TRAVELPING, 0) != RC_OK
+	    || dm_finalize_group(answer) != RC_OK)
+		return;
+}
+
 void add_addr_to_answer(struct nl_object *obj, void *data)
 {
 	DM2_REQUEST *answer = data;
@@ -731,9 +752,13 @@ uint32_t rpc_client_get_interface_state(void *ctx, const char *if_name, DM2_REQU
 
 	/* read IP's from NL */
 
+	int ifindex;
 	struct nl_sock *socket = nl_socket_alloc();
 	struct nl_cache *link_cache;
 	struct nl_cache *addr_cache;
+	struct nl_cache *neigh_cache;
+	struct rtnl_addr *addr_filter = NULL;
+	struct rtnl_neigh *neigh_filter = NULL;
 
 	if (nl_connect(socket, NETLINK_ROUTE) < 0)
 		return RC_ERR_MISC;
@@ -741,38 +766,66 @@ uint32_t rpc_client_get_interface_state(void *ctx, const char *if_name, DM2_REQU
 	printf("#7\n");
 
 	if (rtnl_link_alloc_cache(socket, AF_UNSPEC, &link_cache) < 0
-	    || rtnl_addr_alloc_cache(socket, &addr_cache) < 0) {
+	    || rtnl_addr_alloc_cache(socket, &addr_cache) < 0
+	    || rtnl_neigh_alloc_cache(socket, &neigh_cache) < 0) {
 		nl_socket_free(socket);
 		return RC_ERR_ALLOC;
 	}
 
 	printf("#8\n");
+	rc = RC_OK;
 
-	struct rtnl_addr *filter = rtnl_addr_alloc();
-	rtnl_addr_set_ifindex(filter, rtnl_link_name2i(link_cache, dev));
+	ifindex = rtnl_link_name2i(link_cache, dev);
 
-	rtnl_addr_set_family(filter, AF_INET);
+	addr_filter = rtnl_addr_alloc();
+	rtnl_addr_set_ifindex(addr_filter, ifindex);
 
-	if ((rc = dm_add_object(answer)) != RC_OK)
-		return rc;
-	nl_cache_foreach_filter(addr_cache, (struct nl_object *) filter, add_addr_to_answer, answer);
-	if ((rc = dm_finalize_group(answer)) != RC_OK)
-		return rc;
-
-	rtnl_addr_set_family(filter, AF_INET6);
+	rtnl_addr_set_family(addr_filter, AF_INET);
 
 	if ((rc = dm_add_object(answer)) != RC_OK)
-		return rc;
-	nl_cache_foreach_filter(addr_cache, (struct nl_object *) filter, add_addr_to_answer, answer);
+		goto exit_nl;
+	nl_cache_foreach_filter(addr_cache, (struct nl_object *) addr_filter, add_addr_to_answer, answer);
 	if ((rc = dm_finalize_group(answer)) != RC_OK)
-		return rc;
+		goto exit_nl;
 
+	rtnl_addr_set_family(addr_filter, AF_INET6);
+
+	if ((rc = dm_add_object(answer)) != RC_OK)
+		goto exit_nl;
+	nl_cache_foreach_filter(addr_cache, (struct nl_object *) addr_filter, add_addr_to_answer, answer);
+	if ((rc = dm_finalize_group(answer)) != RC_OK)
+		goto exit_nl;
+
+	neigh_filter = rtnl_neigh_alloc();
+	rtnl_neigh_set_ifindex(neigh_filter, ifindex);
+
+	rtnl_neigh_set_family(neigh_filter, AF_INET);
+
+	if ((rc = dm_add_object(answer)) != RC_OK)
+		goto exit_nl;
+	nl_cache_foreach_filter(neigh_cache, (struct nl_object *) neigh_filter, add_neigh_to_answer, answer);
+	if ((rc = dm_finalize_group(answer)) != RC_OK)
+		goto exit_nl;
+
+	rtnl_neigh_set_family(neigh_filter, AF_INET6);
+
+	if ((rc = dm_add_object(answer)) != RC_OK)
+		goto exit_nl;
+	nl_cache_foreach_filter(neigh_cache, (struct nl_object *) neigh_filter, add_neigh_to_answer, answer);
+	if ((rc = dm_finalize_group(answer)) != RC_OK)
+		goto exit_nl;
+
+	printf("#12\n");
+
+exit_nl:
+	nl_cache_free(neigh_cache);
 	nl_cache_free(addr_cache);
 	nl_cache_free(link_cache);
-	rtnl_addr_put(filter);
+	if (addr_filter) rtnl_addr_put(addr_filter);
+	if (neigh_filter) rtnl_neigh_put(neigh_filter);
 	nl_socket_free(socket);
 
-	return RC_OK;
+	return rc;
 }
 
 static uint32_t
