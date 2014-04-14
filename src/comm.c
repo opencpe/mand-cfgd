@@ -656,10 +656,6 @@ void add_addr_to_answer(struct nl_object *obj, void *data)
 	struct nl_addr *naddr = rtnl_addr_get_local((struct rtnl_addr *) obj);
 	int family = nl_addr_get_family(naddr);
 
-	printf("#9\n");
-
-	printf("family: %d, prefix: %d\n", family, nl_addr_get_prefixlen(naddr));
-
 	if (dm_add_object(answer) != RC_OK
 	    || dm_add_address(answer, AVP_ADDRESS, VP_TRAVELPING, family, nl_addr_get_binary_addr(naddr)) != RC_OK
 	    || dm_add_uint8(answer, AVP_UINT8, VP_TRAVELPING, nl_addr_get_prefixlen(naddr)) != RC_OK
@@ -686,29 +682,24 @@ uint32_t rpc_client_get_interface_state(void *ctx, const char *if_name, DM2_REQU
 
 	dev = wrt_ifname(if_name);
 
-	printf("#1\n");
 	fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
 	if (fd == -1)
 		return RC_ERR_MISC;
 
 	strncpy(ifr.ifr_name, dev, IFNAMSIZ);
 
-	printf("#2\n");
 	if ((rc = if_ioctl(fd, SIOCGIFINDEX, &ifr)) != RC_OK
 	    || (rc = dm_add_int32(answer, AVP_INT32, VP_TRAVELPING, ifr.ifr_ifindex)) != RC_OK)
 		return rc;
 
-	printf("#3\n");
 	if ((rc = if_ioctl(fd, SIOCGIFFLAGS, &ifr)) != RC_OK
 	    || (rc = dm_add_uint32(answer, AVP_UINT32, VP_TRAVELPING, ifr.ifr_flags)) != RC_OK)
 		return rc;
 
-	printf("#4\n");
 	if ((rc = if_ioctl(fd, SIOCGIFHWADDR, &ifr)) != RC_OK
 	    || (rc = dm_add_raw(answer, AVP_BINARY, VP_TRAVELPING, &ifr.ifr_hwaddr, 6)) != RC_OK)
 	    return rc;
 
-	printf("#5\n");
 	ifr.ifr_data = (void *)&cmd;
 	cmd.cmd = ETHTOOL_GSET; /* "Get settings" */
 	if ((rc = if_ioctl(fd, SIOCETHTOOL, &ifr)) != RC_OK) {
@@ -717,8 +708,6 @@ uint32_t rpc_client_get_interface_state(void *ctx, const char *if_name, DM2_REQU
 	} else
 		if ((rc = dm_add_uint32(answer, AVP_UINT32, VP_TRAVELPING, ethtool_cmd_speed(&cmd))) != RC_OK)
 			return rc;
-
-	printf("#6\n");
 
 	if (!(fp = fopen("/proc/net/dev", "r")))
 		return RC_ERR_MISC;
@@ -731,7 +720,6 @@ uint32_t rpc_client_get_interface_state(void *ctx, const char *if_name, DM2_REQU
 				    &device,
 				    &rec_oct, &rec_pkt, &rec_err, &rec_drop,
 				    &snd_oct, &snd_pkt, &snd_err, &snd_drop);
-		printf("scan_count: %d, '%s', '%s'\n", scan_count, device, dev);
 		if (scan_count == 9 && strcmp(dev, device) == 0)
 			break;
 	}
@@ -763,8 +751,6 @@ uint32_t rpc_client_get_interface_state(void *ctx, const char *if_name, DM2_REQU
 	if (nl_connect(socket, NETLINK_ROUTE) < 0)
 		return RC_ERR_MISC;
 
-	printf("#7\n");
-
 	if (rtnl_link_alloc_cache(socket, AF_UNSPEC, &link_cache) < 0
 	    || rtnl_addr_alloc_cache(socket, &addr_cache) < 0
 	    || rtnl_neigh_alloc_cache(socket, &neigh_cache) < 0) {
@@ -772,7 +758,6 @@ uint32_t rpc_client_get_interface_state(void *ctx, const char *if_name, DM2_REQU
 		return RC_ERR_ALLOC;
 	}
 
-	printf("#8\n");
 	rc = RC_OK;
 
 	ifindex = rtnl_link_name2i(link_cache, dev);
@@ -814,8 +799,6 @@ uint32_t rpc_client_get_interface_state(void *ctx, const char *if_name, DM2_REQU
 	nl_cache_foreach_filter(neigh_cache, (struct nl_object *) neigh_filter, add_neigh_to_answer, answer);
 	if ((rc = dm_finalize_group(answer)) != RC_OK)
 		goto exit_nl;
-
-	printf("#12\n");
 
 exit_nl:
 	nl_cache_free(neigh_cache);
