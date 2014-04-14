@@ -680,13 +680,32 @@ void add_neigh_to_answer(struct nl_object *obj, void *data)
 
 void add_addr_to_answer(struct nl_object *obj, void *data)
 {
+	char buf[32];
 	DM2_REQUEST *answer = data;
 	struct nl_addr *naddr = rtnl_addr_get_local((struct rtnl_addr *) obj);
 	int family = nl_addr_get_family(naddr);
+	unsigned int flags = rtnl_addr_get_flags((struct rtnl_addr *) obj);
+	uint8_t origin = 0;
+	uint8_t status = 4;
+	printf("IP: %s\n", nl_addr2str(naddr, buf, sizeof(buf)));
+
+	if (flags & IFA_F_OPTIMISTIC)
+		status = 7;
+	else if (flags & IFA_F_TENTATIVE)
+		status = 5;
+	else if (flags & IFA_F_HOMEADDRESS)
+		status = 0;
+	else if (flags & IFA_F_DEPRECATED)
+		status = 1;
+
+	if (flags & IFA_F_PERMANENT)
+		origin = 1;
 
 	if (dm_add_object(answer) != RC_OK
 	    || dm_add_address(answer, AVP_ADDRESS, VP_TRAVELPING, family, nl_addr_get_binary_addr(naddr)) != RC_OK
 	    || dm_add_uint8(answer, AVP_UINT8, VP_TRAVELPING, nl_addr_get_prefixlen(naddr)) != RC_OK
+	    || dm_add_uint8(answer, AVP_ENUM, VP_TRAVELPING, origin) != RC_OK
+	    || dm_add_uint8(answer, AVP_ENUM, VP_TRAVELPING, status) != RC_OK
 	    || dm_finalize_group(answer) != RC_OK)
 		return;
 }
