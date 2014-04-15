@@ -483,7 +483,13 @@ void if_ip_neigh(const char *name, void *data, size_t size, struct ip_list *list
 
 void if_ip(const char *name, void *data, size_t size, struct if_ip *if_ip)
 {
-	if (strncmp("address", name, 7) == 0) {
+	if (strncmp("enabled", name, 7) == 0) {
+		if_ip->enabled = dm_get_uint8_avp(data);
+	} else if (strncmp("forwarding", name, 9) == 0) {
+		if_ip->forwarding = dm_get_uint8_avp(data);
+	} else if (strncmp("mtu", name, 3) == 0) {
+		if_ip->mtu = dm_get_uint32_avp(data);
+	} else if (strncmp("address", name, 7) == 0) {
 		if_ip_addr(name + 8, data, size, &if_ip->addr);
 	} else if (strncmp("neighbor", name, 8) == 0) {
 		if_ip_neigh(name + 9, data, size, &if_ip->neigh);

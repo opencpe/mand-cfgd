@@ -64,6 +64,9 @@ struct ip_list {
 };
 
 struct if_ip {
+	uint8_t enabled;
+	uint8_t forwarding;
+	uint32_t mtu;
 	struct ip_list addr;
 	struct ip_list neigh;
 };

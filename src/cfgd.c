@@ -80,6 +80,22 @@ int vasystem(const char *fmt, ...)
         return vsystem(buf);
 }
 
+void sys_echo(const char *file, const char *fmt, ...)
+{
+	FILE *fout;
+	va_list vlist;
+
+	fout = fopen(file, "a+");
+	if (!fout)
+		return;
+
+	va_start(vlist, fmt);
+	vfprintf(fout, fmt, vlist);
+	va_end(vlist);
+
+	fclose(fout);
+}
+
 void set_ntp_server(const struct ntp_servers *servers)
 {
 	int i;
@@ -159,12 +175,36 @@ void set_if_addr(struct interface_list *info)
 	int i, j;
 
 	for (i = 0; i < info->count; i++) {
-		for (j = 0; j < info->iface[i].ipv4.addr.count; j++) {
-			vasystem("uci set network.%s.ipaddr=%s", info->iface[i].name, info->iface[i].ipv4.addr.ip[j].address);
-			vasystem("uci set network.%s.netmask=%s", info->iface[i].name, info->iface[i].ipv4.addr.ip[j].value);
-		}
-		for (j = 0; j < info->iface[i].ipv6.addr.count; j++)
-			vasystem("uci set network.%s.ip6addr=%s/%s", info->iface[i].name, info->iface[i].ipv6.addr.ip[j].address, info->iface[i].ipv6.addr.ip[j].value);
+		const char *device = wrt_ifname(info->iface[i].name);
+		char proc[PATH_MAX];
+
+		vasystem("uci set network.%s.mtu=%d", info->iface[i].name, info->iface[i].ipv4.mtu);
+
+		if (info->iface[i].ipv4.enabled) {
+			for (j = 0; j < info->iface[i].ipv4.addr.count; j++) {
+				vasystem("uci set network.%s.ipaddr=%s", info->iface[i].name, info->iface[i].ipv4.addr.ip[j].address);
+				vasystem("uci set network.%s.netmask=%s", info->iface[i].name, info->iface[i].ipv4.addr.ip[j].value);
+			}
+		} else
+			vasystem("uci delete network.%s.ipaddr", info->iface[i].name);
+
+		if (info->iface[i].ipv6.enabled) {
+			for (j = 0; j < info->iface[i].ipv6.addr.count; j++)
+				vasystem("uci set network.%s.ip6addr=%s/%s", info->iface[i].name, info->iface[i].ipv6.addr.ip[j].address, info->iface[i].ipv6.addr.ip[j].value);
+		} else
+			vasystem("uci delete network.%s.if6addr", info->iface[i].name);
+
+		vasystem("uci commit network.%s", info->iface[i].name);
+
+		snprintf(proc, sizeof(proc), "/proc/sys/net/ipv4/conf/%s/forwarding", device);
+		sys_echo(proc, "%u",  info->iface[i].name, info->iface[i].ipv4.forwarding);
+
+		snprintf(proc, sizeof(proc), "/proc/sys/net/ipv6/conf/%s/forwarding", device);
+		sys_echo(proc, "%u",  info->iface[i].name, info->iface[i].ipv6.forwarding);
+
+		snprintf(proc, sizeof(proc), "/proc/sys/net/ipv6/conf/%s/mtu", device);
+		sys_echo(proc, "%u",  info->iface[i].name, info->iface[i].ipv6.mtu);
+
 	}
 }
 
