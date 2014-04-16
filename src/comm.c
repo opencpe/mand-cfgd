@@ -66,6 +66,13 @@
 		return ret;			\
 	} while (0)
 
+#define chomp(s) ({ \
+        char *c = (s) + strlen((s)) - 1; \
+        while ((c > (s)) && (*c == '\n' || *c == '\r' || *c == ' ')) \
+                *c-- = '\0'; \
+        s; \
+})
+
 int sys_scan(const char *file, const char *fmt, ...)
 {
 	FILE *fin;
@@ -940,9 +947,9 @@ init_timezone(DMCONTEXT *dmCtx)
 	struct rpc_db_set_path_value set_value = {
 		.path  = "system.clock.timezone-location",
 		.value = {
-			.code = AVP_STRING,
+			.code = AVP_UNKNOWN,
 			.vendor_id = VP_TRAVELPING,
-			.data = &data
+			.data = data
 		},
 	};
 
@@ -957,6 +964,8 @@ init_timezone(DMCONTEXT *dmCtx)
 	if (!fgets(data, sizeof(data) , pf))
 		;
 	pclose(pf);
+
+	chomp(data);
 
 	if (strlen(data) != 0) {
 		set_value.value.size = strlen(data);
