@@ -11,6 +11,7 @@
 
 struct ntp_servers {
 	void *ctx;
+	int enabled;
 	int count;
 	char **server;
 };

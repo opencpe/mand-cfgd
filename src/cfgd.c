@@ -100,25 +100,24 @@ void set_ntp_server(const struct ntp_servers *servers)
 {
 	int i;
 
+	vasystem("uci set system.ntp.enable_server=%d", servers->enabled);
 	vsystem("uci delete system.ntp.server");
 	for (i = 0; i < servers->count; i++) {
 		vasystem("uci add_list system.ntp.server='%s'", servers->server[i]);
 	}
-	vsystem("uci commit system.ntp.server");
-	vsystem("/etc/init.d/sysntpd restart");
+	vsystem("uci commit system.ntp");
+	vsystem("/etc/init.d/sdateysntpd restart");
 }
 
 void set_dns(const struct string_list *search, const struct string_list *servers)
 {
-	char *s;
 	int i;
 
-	s = talloc_strdup(NULL, "uci set dnsmasq.server");
-	for (i = 0; i < servers->count; i++) {
-		s = talloc_asprintf_append(s, " %s", servers->s[i]);
-	}
-	talloc_free(s);
+	vsystem("uci delete dhcp.@dnsmasq[0].server");
+	for (i = 0; i < servers->count; i++)
+		vasystem("uci add_list dhcp.@dnsmasq[0].server='%s'", servers->s[i]);
 
+	vsystem("uci set dhcp.@dnsmasq[0].domain=1");
 	if (search->count != 0)
 		vasystem("uci set dhcp.@dnsmasq[0].domain=\"%s\"", search->s[0]);
 	vsystem("uci commit dhcp");

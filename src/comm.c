@@ -229,7 +229,9 @@ void ntp_cb(const char *name, uint32_t code, uint32_t vendor_id, void *data, siz
 	if (!(s = strrchr(name, '.')))
 		return;
 
-	if (strncmp(s + 1, "address", 7) == 0) {
+	if (strncmp(s + 1, "enabled", 7) == 0) {
+		srvs->enabled = dm_get_uint8_avp(data);
+	} else if (strncmp(s + 1, "address", 7) == 0) {
 		if ((srvs->count % 16) == 0) {
 			srvs->server = talloc_realloc(NULL, srvs->server, char *, srvs->count + 16);
 			if (!srvs->server)
@@ -253,6 +255,7 @@ ntpListReceived(DMCONTEXT *socket, DMCONFIG_EVENT event, DM2_AVPGRP *grp, void *
 	    || answer_rc != RC_OK)
                 CB_ERR("Couldn't list object, rc=%d,%d.\n", rc, answer_rc);
 
+	srvs.enabled = 0;
 	srvs.count = 0;
 	srvs.server = talloc_array(grp->ctx, char *, 16);
 	if (!srvs.server)
@@ -267,7 +270,7 @@ ntpListReceived(DMCONTEXT *socket, DMCONFIG_EVENT event, DM2_AVPGRP *grp, void *
 static void
 listSystemNtp(DMCONTEXT *dmCtx)
 {
-        if (rpc_db_list_async(dmCtx, 0, "system.ntp.server", ntpListReceived, NULL))
+        if (rpc_db_list_async(dmCtx, 0, "system.ntp", ntpListReceived, NULL))
                 CB_ERR("Couldn't register LIST request.\n");
 }
 
