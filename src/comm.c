@@ -736,7 +736,6 @@ uint32_t rpc_client_get_interface_state(void *ctx, const char *if_name, DM2_REQU
 	uint32_t rc;
 	const char *dev;
 
-	char *device;
         uint64_t rec_pkt = 0, rec_oct = 0, rec_err = 0, rec_drop = 0;
         uint64_t snd_pkt = 0, snd_oct = 0, snd_err = 0, snd_drop = 0;
 	int scan_count;
@@ -779,15 +778,16 @@ uint32_t rpc_client_get_interface_state(void *ctx, const char *if_name, DM2_REQU
 	if (!fgets(line, sizeof(line), fp)) fprintf(stderr, "Cannot parse %s.\n", "/proc/net/dev");
 
 	while (!feof(fp)) {
-		scan_count = fscanf(fp, " %m[^:]:%"PRIu64" %"PRIu64" %"PRIu64" %"PRIu64" %*u %*u %*u %*u %"PRIu64" %"PRIu64" %"PRIu64" %"PRIu64" %*u %*u %*s",
-				    &device,
+		char device[32];
+
+		scan_count = fscanf(fp, " %32[^:]:%"PRIu64" %"PRIu64" %"PRIu64" %"PRIu64" %*u %*u %*u %*u %"PRIu64" %"PRIu64" %"PRIu64" %"PRIu64" %*u %*u %*s",
+				    device,
 				    &rec_oct, &rec_pkt, &rec_err, &rec_drop,
 				    &snd_oct, &snd_pkt, &snd_err, &snd_drop);
 		if (scan_count == 9 && strcmp(dev, device) == 0)
 			break;
 	}
 	fclose(fp);
-	free(device);
 
 	if ((rc = dm_add_object(answer)) != RC_OK
 	    || (rc = dm_add_uint64(answer, AVP_UINT64, VP_TRAVELPING, rec_oct)) != RC_OK
