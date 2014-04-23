@@ -106,7 +106,7 @@ void set_ntp_server(const struct ntp_servers *servers)
 		vasystem("uci add_list system.ntp.server='%s'", servers->server[i]);
 	}
 	vsystem("uci commit system.ntp");
-	vsystem("/etc/init.d/sdateysntpd restart");
+	vsystem("/etc/init.d/sysntpd restart");
 }
 
 void set_dns(const struct string_list *search, const struct string_list *servers)
