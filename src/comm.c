@@ -796,8 +796,11 @@ uint32_t rpc_client_get_interface_state(void *ctx, const char *if_name, DM2_REQU
 
 	strncpy(ifr.ifr_name, dev, IFNAMSIZ);
 
-	if ((rc = if_ioctl(fd, SIOCGIFINDEX, &ifr)) != RC_OK
-	    || (rc = dm_add_int32(answer, AVP_INT32, VP_TRAVELPING, ifr.ifr_ifindex)) != RC_OK)
+	if ((rc = if_ioctl(fd, SIOCGIFINDEX, &ifr)) != RC_OK)
+		return rc;
+	if (ifr.ifr_ifindex == 0)
+		ifr.ifr_ifindex = 2147483647;
+	if ((rc = dm_add_int32(answer, AVP_INT32, VP_TRAVELPING, ifr.ifr_ifindex)) != RC_OK)
 		return rc;
 
 	if ((rc = if_ioctl(fd, SIOCGIFFLAGS, &ifr)) != RC_OK
