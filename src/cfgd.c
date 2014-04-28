@@ -209,8 +209,28 @@ void set_if_addr(struct interface_list *info)
 
 const char *wrt_ifname(const char *name)
 {
-	if (strcmp("lan", name) == 0)
-		return "br-lan";
+	static char bridge[128];
+	char *type;
+	char *device;
+
+	do {
+		type = uci_get("network.%s.type", name);
+		if (type && strcmp(type, "bridge") == 0) {
+			snprintf(bridge, sizeof(bridge), "br-%s", name);
+			return bridge;
+		}
+
+		device = uci_get("network.%s.ifname", name);
+		if (!device || !device[0]) {
+			fprintf(stderr, "wrt_ifname: could not map %s\n", name);
+			return name;
+		}
+
+		name = device;
+	} while (name[0] == '@');
+
+	fprintf(stderr, "wrt_ifname: mapped to %s\n", name);
+
 	return name;
 }
 

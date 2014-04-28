@@ -18,6 +18,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <ctype.h>
+#include <limits.h>
 
 #include <netlink/route/link.h>
 #include <netlink/route/addr.h>
@@ -95,6 +96,36 @@ int sys_scan(const char *file, const char *fmt, ...)
 
 	errno = _errno;
 	return rc;
+}
+
+char *uci_get(const char *fmt, ...)
+{
+	FILE *pf;
+	int r;
+	va_list vlist;
+	char get[PATH_MAX] = "uci get ";
+	static char data[2048];
+
+	va_start(vlist, fmt);
+	vsnprintf(get + strlen(get), sizeof(get) - strlen(get), fmt, vlist);
+	va_end(vlist);
+
+	if (!(pf = popen(get, "r"))) {
+	       fprintf(stderr, "Could not open pipe for output.\n");
+	       return NULL;
+	}
+
+	if (!fgets(data, sizeof(data) , pf))
+		;
+	r = pclose(pf);
+	if (WEXITSTATUS(r) != 0) {
+		fprintf(stderr, "uci exit status: %d\n", WEXITSTATUS(r));
+		return NULL;
+	}
+
+	chomp(data);
+
+	return data;
 }
 
 typedef void (*DECODE_CB)(const char *name, uint32_t code, uint32_t vendor_id, void *data, size_t size, void *cb_data);
@@ -960,32 +991,18 @@ static uint32_t
 init_timezone(DMCONTEXT *dmCtx)
 {
 	uint32_t rc;
-	FILE *pf;
-	char data[2048];
+	char *data = NULL;
 	struct rpc_db_set_path_value set_value = {
 		.path  = "system.clock.timezone-location",
 		.value = {
 			.code = AVP_UNKNOWN,
 			.vendor_id = VP_TRAVELPING,
-			.data = data
 		},
 	};
 
-
-	pf = popen("uci get system.@system[0].zonename", "r");
-
-	if(!pf) {
-	       fprintf(stderr, "Could not open pipe for output.\n");
-	       return RC_OK;
-	}
-
-	if (!fgets(data, sizeof(data) , pf))
-		;
-	pclose(pf);
-
-	chomp(data);
-
-	if (strlen(data) != 0) {
+	data = uci_get("system.@system[0].zonename");
+	if (data && data[0]) {
+		set_value.value.data = data;
 		set_value.value.size = strlen(data);
 
 		if ((rc = rpc_db_set(dmCtx, 1, &set_value, NULL)) != RC_OK) {
