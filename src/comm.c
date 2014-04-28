@@ -979,10 +979,8 @@ init_hostname(DMCONTEXT *dmCtx)
 			.size = strlen(hostname)
 		},
 	};
-	if ((rc = rpc_db_set(dmCtx, 1, &set_value, NULL)) != RC_OK) {
-		ev_break(dmCtx->ev, EVBREAK_ALL);
-		CB_ERR_RET(rc, "Failed to report hostname, rc=%d.", rc);
-	}
+	if ((rc = rpc_db_set(dmCtx, 1, &set_value, NULL)) != RC_OK)
+		logx(LOG_WARNING, "Failed to report hostname, rc=%d.", rc);
 
         if ((rc = rpc_param_notify(dmCtx, NOTIFY_ACTIVE, 1, &set_value.path, NULL)) != RC_OK) {
 		ev_break(dmCtx->ev, EVBREAK_ALL);
@@ -1010,10 +1008,8 @@ init_timezone(DMCONTEXT *dmCtx)
 		set_value.value.data = data;
 		set_value.value.size = strlen(data);
 
-		if ((rc = rpc_db_set(dmCtx, 1, &set_value, NULL)) != RC_OK) {
-			ev_break(dmCtx->ev, EVBREAK_ALL);
-			CB_ERR_RET(rc, "Failed to report timezone, rc=%d.", rc);
-		}
+		if ((rc = rpc_db_set(dmCtx, 1, &set_value, NULL)) != RC_OK)
+			logx(LOG_WARNING, "Failed to report timezone, rc=%d.", rc);
 	}
 
         if ((rc = rpc_param_notify(dmCtx, NOTIFY_ACTIVE, 1, &set_value.path, NULL)) != RC_OK) {
@@ -1056,9 +1052,10 @@ socketConnected(DMCONFIG_EVENT event, DMCONTEXT *dmCtx, void *userdata __attribu
         logx(LOG_DEBUG, "Notification subscription request registered.");
 
 	if (init_hostname(dmCtx) != RC_OK)
-		return rc;
+		logx(LOG_WARNING, "Initial update of Hostname failed.");
+
 	if (init_timezone(dmCtx) != RC_OK)
-		return rc;
+		logx(LOG_WARNING, "Initial update of Timezone failed.");
 
         if ((rc = rpc_recursive_param_notify(dmCtx, NOTIFY_ACTIVE, "system.ntp.server", NULL)) != RC_OK) {
 		ev_break(dmCtx->ev, EVBREAK_ALL);
