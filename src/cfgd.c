@@ -117,7 +117,7 @@ void set_dns(const struct string_list *search, const struct string_list *servers
 	for (i = 0; i < servers->count; i++)
 		vasystem("uci add_list dhcp.@dnsmasq[0].server='%s'", servers->s[i]);
 
-	vsystem("uci set dhcp.@dnsmasq[0].domain=1");
+	vsystem("uci set dhcp.@dnsmasq[0].add_local_domain=1");
 	if (search->count != 0)
 		vasystem("uci set dhcp.@dnsmasq[0].domain=\"%s\"", search->s[0]);
 	vsystem("uci commit dhcp");

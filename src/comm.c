@@ -209,6 +209,21 @@ decode_node_list(const char *prefix, DM2_AVPGRP *grp, DECODE_CB cb, void *cb_dat
 		cb(path, code, vendor_id, data, size, cb_data);
 		break;
 
+	case AVP_ARRAY:
+		if ((r = dm_expect_string_type(&container, AVP_NAME, VP_TRAVELPING, &name)) != RC_OK
+		    || (r = dm_expect_uint32_type(&container, AVP_TYPE, VP_TRAVELPING, &type)) != RC_OK)
+			return r;
+
+		if (!(path = talloc_asprintf(container.ctx, "%s.%s", prefix, name)))
+			return RC_ERR_ALLOC;
+
+		while (dm_expect_group_end(&container) != RC_OK) {
+			if ((r = dm_expect_avp(&container, &code, &vendor_id, &data, &size)) != RC_OK)
+				return r;
+			cb(path, code, vendor_id, data, size, cb_data);
+		}
+		break;
+
 	default:
 		return RC_ERR_MISC;
 	}
