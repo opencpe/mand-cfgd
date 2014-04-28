@@ -878,6 +878,8 @@ uint32_t rpc_client_get_interface_state(void *ctx, const char *if_name, DM2_REQU
 	link = rtnl_link_get_by_name(link_cache, dev);
 	ifindex = rtnl_link_get_ifindex(link);
 	mtu = rtnl_link_get_mtu(link);
+	if (mtu == 0 || mtu > 65535)
+		mtu = 65535;
 
 	addr_filter = rtnl_addr_alloc();
 	rtnl_addr_set_ifindex(addr_filter, ifindex);
