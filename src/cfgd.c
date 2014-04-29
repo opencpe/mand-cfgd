@@ -129,24 +129,29 @@ void set_ssh_keys(const char *name, const struct auth_ssh_key_list *list)
 {
 	int i;
 	FILE *fout;
-	char *s;
-	struct passwd *pw;
+	char *auth_file;
 
-	if (!(pw = getpwnam(name)))
-		return;
+	if (strcmp(name, "root") == 0)
+		auth_file = strdup("/etc/dropbear/authorized_keys");
+	else if (strcmp(name, "netconfd") == 0)
+		auth_file = strdup("/etc/netconf/authorized_keys");
+	else {
+		struct passwd *pw;
 
-	if (!pw->pw_dir || list->count == 0)
-		return;
+		if (!(pw = getpwnam(name)))
+			return;
 
-	if (asprintf(&s, "%s/.ssh/authorized_keys", pw->pw_dir) < 0)
-		return;
+		if (!pw->pw_dir || list->count == 0)
+			return;
 
-	vasystem("mkdir -p %s/.ssh", pw->pw_dir);
+		if (asprintf(&auth_file, "%s/.ssh/authorized_keys", pw->pw_dir) < 0)
+			return;
 
-	if (!(fout = fopen(s, "w"))) {
-		free(s);
-		return;
+		vasystem("mkdir -p %s/.ssh", pw->pw_dir);
 	}
+
+	if (!(fout = fopen(auth_file, "w")))
+		goto exit;
 
 	for (i = 0; i < list->count; i++) {
 		fprintf(stderr, "    Key: %s %s %s\n", list->ssh[i].algo, list->ssh[i].data, list->ssh[i].name);
@@ -154,7 +159,8 @@ void set_ssh_keys(const char *name, const struct auth_ssh_key_list *list)
 	}
 	fclose(fout);
 
-	free(s);
+ exit:
+	free(auth_file);
 }
 
 void set_authentication(const struct auth_list *auth)
