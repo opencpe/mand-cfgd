@@ -100,6 +100,7 @@ void set_ntp_server(const struct ntp_servers *servers)
 {
 	int i;
 
+	vsystem("uci set system.ntp=timeserver");
 	vasystem("uci set system.ntp.enable_server=%d", servers->enabled);
 	vsystem("uci delete system.ntp.server");
 	for (i = 0; i < servers->count; i++) {
