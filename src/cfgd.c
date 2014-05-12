@@ -207,13 +207,13 @@ void set_if_addr(struct interface_list *info)
 		vasystem("uci commit network.%s", info->iface[i].name);
 
 		snprintf(proc, sizeof(proc), "/proc/sys/net/ipv4/conf/%s/forwarding", device);
-		sys_echo(proc, "%u",  info->iface[i].name, info->iface[i].ipv4.forwarding);
+		sys_echo(proc, "%u",  info->iface[i].ipv4.forwarding);
 
 		snprintf(proc, sizeof(proc), "/proc/sys/net/ipv6/conf/%s/forwarding", device);
-		sys_echo(proc, "%u",  info->iface[i].name, info->iface[i].ipv6.forwarding);
+		sys_echo(proc, "%u",  info->iface[i].ipv6.forwarding);
 
 		snprintf(proc, sizeof(proc), "/proc/sys/net/ipv6/conf/%s/mtu", device);
-		sys_echo(proc, "%u",  info->iface[i].name, info->iface[i].ipv6.mtu);
+		sys_echo(proc, "%u",  info->iface[i].ipv6.mtu);
 
 	}
 }
