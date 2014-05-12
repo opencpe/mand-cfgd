@@ -51,7 +51,11 @@
 static const char _ident[] = "cfgd v" VERSION;
 static const char _build[] = "build on " __DATE__ " " __TIME__ " with gcc " __VERSION__;
 
-int vsystem(const char *cmd)
+static int vsystem(const char *cmd);
+static int vasystem(const char *fmt, ...) __attribute__ ((__format__ (__printf__, 1, 2)));
+static void sys_echo(const char *file, const char *fmt, ...) __attribute__ ((__format__ (__printf__, 2, 3)));
+
+static int vsystem(const char *cmd)
 {
         int rc = 0;
         int _errno;
@@ -68,7 +72,7 @@ int vsystem(const char *cmd)
         return rc;
 }
 
-int vasystem(const char *fmt, ...)
+static int vasystem(const char *fmt, ...)
 {
         va_list args;
         char    buf[1024];
@@ -80,7 +84,7 @@ int vasystem(const char *fmt, ...)
         return vsystem(buf);
 }
 
-void sys_echo(const char *file, const char *fmt, ...)
+static void sys_echo(const char *file, const char *fmt, ...)
 {
 	FILE *fout;
 	va_list vlist;
