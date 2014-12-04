@@ -39,11 +39,7 @@
 #include <mand/logx.h>
 #include <mand/binary.h>
 
-#ifdef HAVE_TALLOC_TALLOC_H
-# include <talloc/talloc.h>
-#else
-# include <talloc.h>
-#endif
+#include <ralloc.h>
 
 #include "cfgd.h"
 #include "comm.h"

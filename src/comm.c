@@ -33,11 +33,7 @@
 #include <mand/logx.h>
 #include <mand/binary.h>
 
-#ifdef HAVE_TALLOC_TALLOC_H
-# include <talloc/talloc.h>
-#else
-# include <talloc.h>
-#endif
+# include <ralloc.h>
 
 #include <libdmconfig/codes.h>
 #include <libdmconfig/dmmsg.h>
@@ -141,7 +137,7 @@ static void *add_var_list(struct var_list *list, size_t size)
 	void *p;
 
 	if ((list->count % 16) == 0) {
-		if (!(list->data = talloc_realloc_size(list->ctx, list->data, size * (list->count + 16))))
+		if (!(list->data = reralloc_size(list->ctx, list->data, size * (list->count + 16))))
 			return NULL;
 	}
 	list->count++;
@@ -164,7 +160,7 @@ static void add_string_list(struct string_list *list, const void *data, size_t s
 	if (!(d = add_var_list((struct var_list *)list, sizeof(char *))))
 		return;
 
-	*d = talloc_strndup(list->ctx, data, size);
+	*d = ralloc_strndup(list->ctx, data, size);
 }
 
 uint32_t
@@ -194,7 +190,7 @@ decode_node_list(const char *prefix, DM2_AVPGRP *grp, DECODE_CB cb, void *cb_dat
 		if ((r = dm_expect_string_type(&container, AVP_NAME, VP_TRAVELPING, &name)) != RC_OK)
 			return r;
 
-		if (!(path = talloc_asprintf(container.ctx, "%s.%s", prefix, name)))
+		if (!(path = ralloc_asprintf(container.ctx, "%s.%s", prefix, name)))
 			return RC_ERR_ALLOC;
 
 		while (decode_node_list(path, &container, cb, cb_data) == RC_OK) {
@@ -206,7 +202,7 @@ decode_node_list(const char *prefix, DM2_AVPGRP *grp, DECODE_CB cb, void *cb_dat
 		if ((r = dm_expect_uint16_type(&container, AVP_NAME, VP_TRAVELPING, &id)) != RC_OK)
 			return r;
 
-		if (!(path = talloc_asprintf(container.ctx, "%s.%d", prefix, id)))
+		if (!(path = ralloc_asprintf(container.ctx, "%s.%d", prefix, id)))
 			return RC_ERR_ALLOC;
 
 		while (decode_node_list(path, &container, cb, cb_data) == RC_OK) {
@@ -218,7 +214,7 @@ decode_node_list(const char *prefix, DM2_AVPGRP *grp, DECODE_CB cb, void *cb_dat
 		if ((r = dm_expect_string_type(&container, AVP_NAME, VP_TRAVELPING, &name)) != RC_OK)
 			return r;
 
-		if (!(path = talloc_asprintf(container.ctx, "%s.%s", prefix, name)))
+		if (!(path = ralloc_asprintf(container.ctx, "%s.%s", prefix, name)))
 			return RC_ERR_ALLOC;
 
 		while (decode_node_list(path, &container, cb, cb_data) == RC_OK) {
@@ -231,7 +227,7 @@ decode_node_list(const char *prefix, DM2_AVPGRP *grp, DECODE_CB cb, void *cb_dat
 		    || (r = dm_expect_uint32_type(&container, AVP_TYPE, VP_TRAVELPING, &type)) != RC_OK)
 			return r;
 
-		if (!(path = talloc_asprintf(container.ctx, "%s.%s", prefix, name)))
+		if (!(path = ralloc_asprintf(container.ctx, "%s.%s", prefix, name)))
 			return RC_ERR_ALLOC;
 
 		if ((r = dm_expect_avp(&container, &code, &vendor_id, &data, &size)) != RC_OK)
@@ -245,7 +241,7 @@ decode_node_list(const char *prefix, DM2_AVPGRP *grp, DECODE_CB cb, void *cb_dat
 		    || (r = dm_expect_uint32_type(&container, AVP_TYPE, VP_TRAVELPING, &type)) != RC_OK)
 			return r;
 
-		if (!(path = talloc_asprintf(container.ctx, "%s.%s", prefix, name)))
+		if (!(path = ralloc_asprintf(container.ctx, "%s.%s", prefix, name)))
 			return RC_ERR_ALLOC;
 
 		while (dm_expect_group_end(&container) != RC_OK) {
@@ -279,11 +275,11 @@ void ntp_cb(const char *name, uint32_t code, uint32_t vendor_id, void *data, siz
 		srvs->enabled = dm_get_uint8_avp(data);
 	} else if (strncmp(s + 1, "address", 7) == 0) {
 		if ((srvs->count % 16) == 0) {
-			srvs->server = talloc_realloc(NULL, srvs->server, char *, srvs->count + 16);
+			srvs->server = reralloc(NULL, srvs->server, char *, srvs->count + 16);
 			if (!srvs->server)
 				return;
 		}
-		srvs->server[srvs->count] = talloc_strndup(srvs->server, data, size);
+		srvs->server[srvs->count] = ralloc_strndup(srvs->server, data, size);
 		srvs->count++;
 	}
 }
@@ -303,7 +299,7 @@ ntpListReceived(DMCONTEXT *socket, DMCONFIG_EVENT event, DM2_AVPGRP *grp, void *
 
 	srvs.enabled = 0;
 	srvs.count = 0;
-	srvs.server = talloc_array(grp->ctx, char *, 16);
+	srvs.server = ralloc_array(grp->ctx, char *, 16);
 	if (!srvs.server)
 		return;
 
@@ -385,11 +381,11 @@ void ssh_key(const char *name, void *data, size_t size, struct auth_ssh_key_list
 		if (!(d = add_var_list((struct var_list *)list, sizeof(struct auth_ssh_key))))
 			return;
 
-		d->name = talloc_strndup(list->ctx, data, size);
+		d->name = ralloc_strndup(list->ctx, data, size);
 	} else if (strncmp(name, "algorithm", 9) == 0) {
-		list->ssh[list->count - 1].algo = talloc_strndup(list->ctx, data, size);
+		list->ssh[list->count - 1].algo = ralloc_strndup(list->ctx, data, size);
 	} else if (strncmp(name, "key-data", 8) == 0) {
-		list->ssh[list->count - 1].data = talloc_size(list->ctx, size * 2);
+		list->ssh[list->count - 1].data = ralloc_size(list->ctx, size * 2);
 		dm_to64(data, size, list->ssh[list->count - 1].data);
 	}
 }
@@ -413,10 +409,10 @@ void auth_cb(const char *name, uint32_t code, uint32_t vendor_id, void *data, si
 
 		new_var_list(info->ctx, (struct var_list *)&d->ssh, sizeof(struct auth_ssh_key_list));
 
-		d->name = talloc_strndup(info->ctx, data, size);
+		d->name = ralloc_strndup(info->ctx, data, size);
 	} else if (strncmp(s + 1, "password", 8) == 0) {
 		printf("pass: %*s\n", (int)size, (char *)data);
-		info->user[info->count - 1].password = talloc_strndup(info->ctx, data, size);
+		info->user[info->count - 1].password = ralloc_strndup(info->ctx, data, size);
 	} else {
 		if (strncmp(s + 1, "ssh-key.", 8) == 0) {
 			if (!(s = strchr(s + 10, '.')))
@@ -484,11 +480,11 @@ void if_ip_addr(const char *name, void *data, size_t size, struct ip_list *list)
 		dm_get_address_avp(&af, &addr, sizeof(addr), data, size);
 		inet_ntop(af, &addr, b, sizeof(b));
 		d->af = af;
-		d->address = talloc_strdup(list->ctx, b);
+		d->address = ralloc_strdup(list->ctx, b);
 	} else if (size != 0 && strncmp("netmask", s + 1, 7) == 0) {
 		struct ipaddr *d = list->ip + list->count - 1;
 
-		d->value = talloc_asprintf(list->ctx, data, size);
+		d->value = ralloc_asprintf(list->ctx, data, size);
 	} else if (size != 0 && strncmp("prefix-length", s + 1, 13) == 0) {
 		struct ipaddr *d = list->ip + list->count - 1;
 
@@ -500,12 +496,12 @@ void if_ip_addr(const char *name, void *data, size_t size, struct ip_list *list)
 			addr.s_addr = htonl(0xffffffff << (32 - dm_get_uint32_avp(data)));
 
 			inet_ntop(AF_INET, &addr, b, sizeof(b));
-			d->value = talloc_strdup(list->ctx, b);
+			d->value = ralloc_strdup(list->ctx, b);
 
 			break;
 		}
 		case AF_INET6:
-			d->value = talloc_asprintf(list->ctx, "%u", dm_get_uint32_avp(data));
+			d->value = ralloc_asprintf(list->ctx, "%u", dm_get_uint32_avp(data));
 			break;
 		}
 	}
@@ -529,11 +525,11 @@ void if_ip_neigh(const char *name, void *data, size_t size, struct ip_list *list
 
 		dm_get_address_avp(&af, &addr, sizeof(addr), data, size);
 		inet_ntop(af, &addr, b, sizeof(b));
-		d->address = talloc_strdup(list->ctx, b);
+		d->address = ralloc_strdup(list->ctx, b);
 	} else if (strncmp("link-layer-address", s + 1, 20) == 0) {
 		struct ipaddr *d = list->ip + list->count - 1;
 
-		d->value = talloc_strndup(list->ctx, data, size);
+		d->value = ralloc_strndup(list->ctx, data, size);
 	}
 }
 
@@ -573,7 +569,7 @@ void if_cb(const char *name, uint32_t code, uint32_t vendor_id, void *data, size
 		new_var_list(info->ctx, (struct var_list *)&d->ipv6.addr, sizeof(struct ip_list));
 		new_var_list(info->ctx, (struct var_list *)&d->ipv6.neigh, sizeof(struct ip_list));
 
-		d->name = talloc_strndup(info->ctx, data, size);
+		d->name = ralloc_strndup(info->ctx, data, size);
 	} else if (strncmp(s + 1, "ipv4", 4) == 0) {
 		if_ip(s + 6, data, size, &info->iface[info->count - 1].ipv4);
 	} else if (strncmp(s + 1, "ipv6", 4) == 0) {

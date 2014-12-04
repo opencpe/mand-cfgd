@@ -22,7 +22,7 @@ sysfs and netconf API's are used.
 - shtool
 - gcc >= 4.7
 - libev (including the event.h compatibility header, libev-libevent-dev package on Debian/Ubuntu)
-- libtalloc
+- libralloc
 
 ## Build and Install
 
